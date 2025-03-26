@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 25.0.1704.4
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "stoplicht-controller", "stoplicht-controller\stoplicht-controller.csproj", "{A88F2D6A-0BFA-4C9A-B0D0-3CD6E44EBF9B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A88F2D6A-0BFA-4C9A-B0D0-3CD6E44EBF9B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A88F2D6A-0BFA-4C9A-B0D0-3CD6E44EBF9B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A88F2D6A-0BFA-4C9A-B0D0-3CD6E44EBF9B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A88F2D6A-0BFA-4C9A-B0D0-3CD6E44EBF9B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {2173197E-ED95-4395-88A2-439F2B04D76C}
+	EndGlobalSection
+EndGlobal
