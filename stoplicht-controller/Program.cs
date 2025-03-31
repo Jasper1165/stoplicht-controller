@@ -7,24 +7,27 @@ using stoplicht_controller.Classes;
 
 class Program
 {
-    static List<Direction> directions = new List<Direction>();
-    static Dictionary<string, Sensor> sensors = new Dictionary<string, Sensor>(); // Dictionary om sensoren op te slaan
-    static Dictionary<int, Group> groups = new Dictionary<int, Group>(); // Dictionary om groepen op te slaan
-    static string host = "tcp://*:5555";
-    static string[] topics = new string[] { "laneSensor", "specialSensor", "priorityVehicle" };
-    static Communicator communicator = new Communicator(host, topics);
+    static public List<Direction> Directions { get; set; } = new List<Direction>();
+    static public Bridge Bridge { get; set; } = new Bridge();
+    static public List<Direction> priorityVehicleQueue = new List<Direction>();
+    static string subscriberAddress = "tcp://192.168.50.137:5555";
+    static string publisherAddress = "tcp://10.6.0.4:5556";
+    static string[] topics = new string[] { "sensoren_rijbaan", "specialSensor", "priorityVehicle" };
+    static Communicator communicator = new Communicator(subscriberAddress, publisherAddress, topics);
     static void Main()
     {
         loadIntersectionData();
-        communicator.Start();
+        communicator.StartSubscriber();
+        communicator.StartPublisher(topic: "auto");
 
-
-
+        while(true) {
+            update();
+        }
     }
     // Update method
     static void update()
     {
-
+        Console.WriteLine(communicator.LaneSensorData);
     }
     static void loadIntersectionData()
     {
@@ -37,42 +40,57 @@ class Program
             string jsonContent = File.ReadAllText(jsonFilePath);
             JObject jsonObject = JObject.Parse(jsonContent);
 
-            // Load sensors
-            var sensorData = jsonObject["sensors"].ToObject<Dictionary<string, Sensor>>();
-            foreach (var sensorKvp in sensorData)
-            {
-                string sensorName = sensorKvp.Key;
-                Sensor sensor = sensorKvp.Value;
-                sensors[sensorName] = sensor;
-            }
-
-            // deserialize groups (json)
-            var groupsData = jsonObject["groups"].ToObject<Dictionary<string, Group>>();
+            var groupsData = jsonObject["groups"].ToObject<Dictionary<string, JObject>>();
 
             foreach (var groupKvp in groupsData)
             {
+                // Maak een nieuwe Direction instance voor elke groep
                 int groupId = int.Parse(groupKvp.Key);
-                Group group = groupKvp.Value;
-                group.Id = groupId;
-                groups[groupId] = group;
+                JObject groupObj = groupKvp.Value;
 
-                // loop through trafficlights
-                foreach (var laneKvp in group.Lanes)
+                Direction direction = new Direction();
+                direction.Id = groupId;
+
+                // Lees de intersections uit de groep (dit bepaalt met welke andere groepen deze Direction een intersectie heeft)
+                JArray intersectsArray = (JArray)groupObj["intersects_with"];
+                foreach (var intersect in intersectsArray)
                 {
-                    int laneId = int.Parse(laneKvp.Key);
-                    TrafficLight trafficLight = laneKvp.Value ?? new TrafficLight();
-                    trafficLight.Id = laneId;
-
-                    // create instances of trafficlight
-                    Direction direction = new Direction
-                    {
-                        Id = group.Id + "_" + trafficLight.Id,
-                        IntersectsWith = group.IntersectsWith,
-                        trafficLights = new List<TrafficLight> { new TrafficLight { Id = trafficLight.Id } }
-                    };
-                    directions.Add(direction);
+                    direction.Intersections.Add(intersect.ToObject<int>());
                 }
+
+                // Maak voor elke lane binnen de groep een TrafficLight aan
+                JObject lanesObj = (JObject)groupObj["lanes"];
+                foreach (var laneProperty in lanesObj.Properties())
+                {
+                    // Bepaal de laneId op basis van de key in de lanes dictionary
+                    int laneId = int.Parse(laneProperty.Name);
+                    // Stel een voorbeeld traffic light id samen, bv. group * 10 + lane
+                    string trafficLightId = $"{groupId}.{laneId}";
+
+                    TrafficLight tl = new TrafficLight
+                    {
+                        Id = trafficLightId
+                    };
+
+                    // Hier kun je eventueel extra logica toevoegen om Sensor instanties toe te voegen.
+                    // Bijvoorbeeld: als er in de groep sensorinformatie staat (zoals transition_blockers),
+                    // dan kun je op basis daarvan Sensor objecten aanmaken en toevoegen aan tl.Sensors.
+
+                    direction.TrafficLights.Add(tl);
+                }
+
+                // Voeg de nieuw aangemaakte Direction toe aan de controller
+                Directions.Add(direction);
             }
+
+            Console.WriteLine("Intersection data geladen..");
+            // foreach (var direction in Directions)
+            // {
+            //     foreach(var intersection in direction.TrafficLights)
+            //     {
+            //         Console.WriteLine($"TrafficLight {intersection.Id} in Direction {direction.Id}");
+            //     }
+            // }
         }
         else
         {

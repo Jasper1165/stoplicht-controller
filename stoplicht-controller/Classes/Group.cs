@@ -19,7 +19,7 @@ public class Group
     public List<string> VehicleType { get; set; }
 
     [JsonProperty("lanes")]
-    public Dictionary<string, Lane> Lanes { get; set; }
+    public Dictionary<string, TrafficLight> TrafficLights { get; set; }
 
     [JsonProperty("is_physical_barrier")]
     public bool IsPhysicalBarrier { get; set; }

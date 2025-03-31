@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using NetMQ;
 using NetMQ.Sockets;
@@ -8,22 +10,24 @@ namespace stoplicht_controller.Classes
     public class Communicator
     {
         private readonly PublisherSocket publisher;
-        private readonly SubscriberSocket subscriber;
-        public String? LaneSensorData {get; set;}
-        public String? SpecialSensorData {get; set;}
-        public String? PriorityVehicleData {get; set;}
+        private readonly string publishAddress;
         private readonly string subscribeAddress;
-        private readonly string[] subscribeTopics; // Array van topics
+        private readonly string[] subscribeTopics;
         private readonly List<Thread> subscribeThreads = new();
-        private readonly List<SubscriberSocket> subscribers = new();
 
-        public Communicator(string subscribeAddress, string[] subscribeTopics)
+        public string? LaneSensorData { get; set; }
+        public string? SpecialSensorData { get; set; }
+        public string? PriorityVehicleData { get; set; }
+
+        public Communicator(string subscribeAddress, string publisherAddress, string[] subscribeTopics)
         {
             this.subscribeAddress = subscribeAddress;
             this.subscribeTopics = subscribeTopics;
+            this.publishAddress = publisherAddress;
+            this.publisher = new PublisherSocket();
         }
 
-        public void Start()
+        public void StartSubscriber()
         {
             foreach (string topic in subscribeTopics)
             {
@@ -45,9 +49,8 @@ namespace stoplicht_controller.Classes
 
                         while (true)
                         {
-                            string receivedTopic = subscriber.ReceiveFrameString();
-                            string message = subscriber.ReceiveFrameString();
-                            // process message and update properties
+                            string receivedTopic = topic;
+                            string message = Regex.Replace(subscriber.ReceiveFrameString(), @"^[^{]+", "").Trim();
                             ProcessMessage(receivedTopic, message);
                         }
                     }
@@ -61,25 +64,21 @@ namespace stoplicht_controller.Classes
             subscribeThreads.Add(subscribeThread);
             subscribeThread.Start();
         }
-        // Process message and update properties
+
         private void ProcessMessage(string topic, string message)
         {
             switch (topic)
             {
                 case "sensoren_rijbaan":
                     LaneSensorData = message;
-                    Console.WriteLine($"LaneSensorData updated: {LaneSensorData}");
-                    // Deserialize JSON en verwerk data
                     break;
                 case "sensoren_speciaal":
                     SpecialSensorData = message;
                     Console.WriteLine($"SpecialSensorData updated: {SpecialSensorData}");
-                    // Deserialize JSON en verwerk data
                     break;
                 case "voorrangsvoertuig":
                     PriorityVehicleData = message;
                     Console.WriteLine($"PriorityVehicleData updated: {PriorityVehicleData}");
-                    // Deserialize JSON en verwerk data
                     break;
                 default:
                     Console.WriteLine($"Onbekend topic ontvangen: {topic}");
@@ -87,14 +86,33 @@ namespace stoplicht_controller.Classes
             }
         }
 
-        public void Stop()
+        public void StartPublisher(string topic)
         {
-            // stop all threads
-            foreach (Thread thread in subscribeThreads)
-            {
-                thread.Abort();
-            }
-        }
+            publisher.Bind(this.publishAddress);
+            Console.WriteLine($"Publisher gestart op {this.publishAddress}...");
 
+            new Thread(() =>
+            {
+                    int count = 1;
+                    while (true)
+                    {
+                    // JSON structuur behouden met Dictionary
+                    var statusUpdate = new Dictionary<string, object>
+                    {
+                        { "1.1", new { voor = false, achter = false } },
+                        { "22.1", new { voor = true, achter = false } }
+                    };
+
+                    string jsonMessage = JsonSerializer.Serialize(statusUpdate);
+
+                    publisher
+                    .SendMoreFrame(topic)
+                    .SendFrame(jsonMessage);
+
+                    count++;
+                    Thread.Sleep(100);
+                }
+            }).Start();
+        }
     }
 }

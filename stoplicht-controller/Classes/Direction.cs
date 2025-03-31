@@ -5,11 +5,11 @@ namespace stoplicht_controller.Classes
 {
 	public class Direction
 	{
-		public string Id { get; set; }
+        public int Id { get; set; }
+        public LightColor Color { get; set; } = LightColor.Red; // standaardkleur; kan later aangepast worden
+        public List<int> Intersections { get; set; } = new List<int>();
+        public List<TrafficLight> TrafficLights { get; set; } = new List<TrafficLight>();
 
-		public LightColor TrafficLightState { get; set; }
-		public List<int> IntersectsWith { get; set; }
-		public List<TrafficLight> trafficLights { get; set; }
 	}
 }
 
