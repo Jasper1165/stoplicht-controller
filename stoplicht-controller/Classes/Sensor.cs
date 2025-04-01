@@ -4,9 +4,8 @@ namespace stoplicht_controller.Classes
 {
 	public class Sensor
 	{
-        public SensorPosition Position { get; set; } = SensorPosition.Back;
-        public bool IsActivated { get; set; }
-        public string SensorName { get; set; }
+                public SensorPosition Position { get; set; } = SensorPosition.Back;
+                public bool IsActivated { get; set; }
 	}
 }
 

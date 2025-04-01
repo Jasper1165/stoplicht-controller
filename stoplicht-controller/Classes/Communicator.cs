@@ -80,6 +80,10 @@ namespace stoplicht_controller.Classes
                     PriorityVehicleData = message;
                     Console.WriteLine($"PriorityVehicleData updated: {PriorityVehicleData}");
                     break;
+                case "tijd":
+                    // PriorityVehicleData = message;
+                    Console.WriteLine($"tijd: {message}");
+                    break;
                 default:
                     Console.WriteLine($"Onbekend topic ontvangen: {topic}");
                     break;
@@ -99,8 +103,24 @@ namespace stoplicht_controller.Classes
                     // JSON structuur behouden met Dictionary
                     var statusUpdate = new Dictionary<string, object>
                     {
-                        { "1.1", new { voor = false, achter = false } },
-                        { "22.1", new { voor = true, achter = false } }
+                        { "22.1", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                { "achter", false }
+                            }
+                        },
+                        { "1.1", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                { "achter", true }
+                            }
+                        },
+                        { "2.2", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                { "achter", false }
+                            }
+                        }
                     };
 
                     string jsonMessage = JsonSerializer.Serialize(statusUpdate);
