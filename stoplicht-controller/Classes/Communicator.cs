@@ -78,7 +78,6 @@ namespace stoplicht_controller.Classes
                     break;
                 case "voorrangsvoertuig":
                     PriorityVehicleData = message;
-                    Console.WriteLine($"PriorityVehicleData updated: {PriorityVehicleData}");
                     break;
                 case "tijd":
                     // PriorityVehicleData = message;
@@ -103,7 +102,13 @@ namespace stoplicht_controller.Classes
                     // JSON structuur behouden met Dictionary
                     var statusUpdate = new Dictionary<string, object>
                     {
-                        { "22.1", new Dictionary<string, object>
+                        { "8.1", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                { "achter", false }
+                            }
+                        },
+                        { "6.1", new Dictionary<string, object>
                             {
                                 { "voor", true },
                                 { "achter", false }
@@ -120,8 +125,71 @@ namespace stoplicht_controller.Classes
                                 { "voor", true },
                                 { "achter", false }
                             }
+                        },
+                        { "11.1", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                { "achter", true }
+                            }
+                        },
+                        { "32.1", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                // { "achter", true }
+                            }
+                        },
+                        { "32.2", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                // { "achter", true }
+                            }
+                        },
+                        { "35.1", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                // { "achter", true }
+                            }
+                        },
+                        { "35.2", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                // { "achter", true }
+                            }
+                        },
+                        { "36", new Dictionary<string, object>
+                            {
+                                { "voor", true },
+                                // { "achter", true }
+                            }
                         }
                     };
+
+                    // dummy json for priority vehicle data:
+                    // var statusUpdate = new Dictionary<string, object>
+                    // {
+                    //     { "queue", new List<Dictionary<string, object>>
+                    //         {
+                    //             new Dictionary<string, object>
+                    //             {
+                    //                 { "baan", "8.2" },
+                    //                 { "simulatie_tijd_ms", 1231456352542 },
+                    //                 { "prioriteit", 1 }
+                    //             },
+                    //             new Dictionary<string, object>
+                    //             {
+                    //                 { "baan", "3.1" },
+                    //                 { "simulatie_tijd_ms", 1231456650000 },
+                    //                 { "prioriteit", 2 }
+                    //             },
+                    //             new Dictionary<string, object>
+                    //             {
+                    //                 { "baan", "1.1" },
+                    //                 { "simulatie_tijd_ms", 1231456650000 },
+                    //                 { "prioriteit", 1 }
+                    //             }
+                    //         }
+                    //     }
+                    // };
 
                     string jsonMessage = JsonSerializer.Serialize(statusUpdate);
 
