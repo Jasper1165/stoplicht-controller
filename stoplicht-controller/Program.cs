@@ -14,8 +14,8 @@ class Program
     static public Bridge Bridge { get; set; } = new Bridge();
     static public List<Direction> PriorityVehicleQueue { get; set; } = new List<Direction>();
 
-    static string subscriberAddress = "tcp://192.168.1.150:5555";
-    static string publisherAddress = "tcp://192.168.1.150:5555";
+    static string subscriberAddress = "tcp://10.121.17.84:5556";
+    static string publisherAddress = "tcp://0.0.0.0:5557";
     static string[] topics = { "sensoren_rijbaan", "tijd", "voorrangsvoertuig" };
     static Communicator communicator = new Communicator(subscriberAddress, publisherAddress, topics);
 
@@ -27,18 +27,21 @@ class Program
     static void Main()
     {
         LoadIntersectionData();
-        communicator.StartPublisher("sensoren_rijbaan");
+        // communicator.StartPublisher("sensoren_rijbaan");
         communicator.StartSubscriber();
+
 
         // Initialiseer de cyclus als er al richtingdata is
         if (Directions.Any())
         {
             SwitchTrafficLights();
+            SendTrafficLightStates();
         }
 
         while (true)
         {
             Update();
+            Console.WriteLine(communicator.LaneSensorData);
             Thread.Sleep(1000);
         }
     }
@@ -61,6 +64,7 @@ class Program
         {
             Console.WriteLine("Geen richting ingesteld voor groen! Initiële switch...");
             SwitchTrafficLights();
+            SendTrafficLightStates();
             return;
         }
 
@@ -68,73 +72,73 @@ class Program
         if (timeDifference >= GREEN_DURATION)
         {
             SwitchTrafficLights();
+            SendTrafficLightStates();
         }
     }
-private static void SwitchTrafficLights()
-{
-    var availableDirections = Directions
-        .Where(d => GetPriority(d) > 0)
-        .OrderByDescending(d => GetPriority(d)) // Eerst hoogste prioriteit
-        .ThenBy(d => d.Id)                      // Daarna laagste ID
-        .ToList();
 
-    if (!availableDirections.Any())
+    private static void SwitchTrafficLights()
     {
-        Console.WriteLine("Geen beschikbare richtingen gevonden om naar groen te schakelen.");
-        return;
-    }
+        var availableDirections = Directions
+            .Where(d => GetPriority(d) > 0)
+            .OrderByDescending(d => GetPriority(d)) // Eerst hoogste prioriteit
+            .ThenBy(d => d.Id)                      // Daarna laagste ID
+            .ToList();
 
-    // Start selectie vanaf lastSwitchIndex (Round-Robin)
-    var newGreenGroup = new List<Direction>();
-    int count = availableDirections.Count;
-
-    for (int i = 0; i < count; i++)
-    {
-        int index = (lastSwitchIndex + i) % count;
-        var candidate = availableDirections[index];
-
-        bool conflicts = newGreenGroup.Any(green =>
-            green.Intersections.Contains(candidate.Id) ||
-            candidate.Intersections.Contains(green.Id));
-
-        if (!conflicts)
+        if (!availableDirections.Any())
         {
-            newGreenGroup.Add(candidate);
+            Console.WriteLine("Geen beschikbare richtingen gevonden om naar groen te schakelen.");
+            return;
         }
+
+        // Start selectie vanaf lastSwitchIndex (Round-Robin)
+        var newGreenGroup = new List<Direction>();
+        int count = availableDirections.Count;
+
+        for (int i = 0; i < count; i++)
+        {
+            int index = (lastSwitchIndex + i) % count;
+            var candidate = availableDirections[index];
+
+            bool conflicts = newGreenGroup.Any(green =>
+                green.Intersections.Contains(candidate.Id) ||
+                candidate.Intersections.Contains(green.Id));
+
+            if (!conflicts)
+            {
+                newGreenGroup.Add(candidate);
+            }
+        }
+
+        // **Controleer of de nieuwe groep niet dezelfde is als de vorige**
+        if (newGreenGroup.SequenceEqual(currentGreenDirections))
+        {
+            lastSwitchIndex = (lastSwitchIndex + 1) % count; // Ga verder in de lijst
+            Console.WriteLine("Zelfde groene groep, probeer volgende index.");
+            return;
+        }
+
+        // **Zet de vorige groep op rood**
+        foreach (var dir in currentGreenDirections)
+        {
+            dir.Color = LightColor.Red;
+            Console.WriteLine($"Direction {dir.Id} staat nu op rood.");
+        }
+        currentGreenDirections.Clear();
+
+        // **Zet de nieuwe groep op groen**
+        currentGreenDirections = newGreenGroup;
+        foreach (var dir in currentGreenDirections)
+        {
+            dir.Color = LightColor.Green;
+            Console.WriteLine($"Direction {dir.Id} staat nu op groen met prioriteit {GetPriority(dir)}.");
+        }
+
+        // **Update de tijd en index voor de volgende ronde**
+        lastSwitchTime = DateTime.Now;
+        lastSwitchIndex = (lastSwitchIndex + newGreenGroup.Count) % count; // Spring over de gekozen richtingen heen
     }
 
-    // **Controleer of de nieuwe groep niet dezelfde is als de vorige**
-    if (newGreenGroup.SequenceEqual(currentGreenDirections))
-    {
-        lastSwitchIndex = (lastSwitchIndex + 1) % count; // Ga verder in de lijst
-        Console.WriteLine("Zelfde groene groep, probeer volgende index.");
-        return;
-    }
-
-    // **Zet de vorige groep op rood**
-    foreach (var dir in currentGreenDirections)
-    {
-        dir.Color = LightColor.Red;
-        Console.WriteLine($"Direction {dir.Id} staat nu op rood.");
-    }
-    currentGreenDirections.Clear();
-
-    // **Zet de nieuwe groep op groen**
-    currentGreenDirections = newGreenGroup;
-    foreach (var dir in currentGreenDirections)
-    {
-        dir.Color = LightColor.Green;
-        Console.WriteLine($"Direction {dir.Id} staat nu op groen met prioriteit {GetPriority(dir)}.");
-    }
-
-    // **Update de tijd en index voor de volgende ronde**
-    lastSwitchTime = DateTime.Now;
-    lastSwitchIndex = (lastSwitchIndex + newGreenGroup.Count) % count; // Spring over de gekozen richtingen heen
-}
-
-
-
-    // Bepaalt de prioriteit van een richting: hogere prioriteit als beide sensoren (file) actief zijn.// Bepaalt de prioriteit van een richting: hogere waarde als beide sensoren (file) actief zijn
+    // Bepaalt de prioriteit van een richting: hogere waarde als beide sensoren (file) actief zijn
     private static int GetPriority(Direction direction)
     {
         int priority = 0;
@@ -264,5 +268,40 @@ private static void SwitchTrafficLights()
         }
 
         Console.WriteLine("Intersection data geladen..");
+    }
+
+    // Stelt JSON samen met de huidige kleuren van alle verkeerslichten en stuurt het terug via de Communicator
+    static void SendTrafficLightStates()
+    {
+        if (string.IsNullOrEmpty(communicator.LaneSensorData))
+            return;
+
+        var sensorData = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);
+        if (sensorData == null)
+            return;
+
+        var stateDict = new Dictionary<string, string>();
+
+        foreach (var (trafficLightId, _) in sensorData)
+        {
+            var trafficLight = Directions
+                .SelectMany(d => d.TrafficLights)
+                .FirstOrDefault(tl => tl.Id == trafficLightId);
+
+            if (trafficLight == null)
+                continue;
+
+            var direction = Directions.FirstOrDefault(d => d.TrafficLights.Contains(trafficLight));
+            if (direction == null)
+                continue;
+
+            string state = direction.Color == LightColor.Green ? "groen" : "rood";
+            stateDict[trafficLight.Id] = state;
+        }
+
+        communicator.PublishMessage("stoplichten", stateDict);
+        // Console.WriteLine(json);
+        // communicator.SendMessage("verkeerslichten", json); // Topic waarop de status teruggestuurd wordt
+        // Console.WriteLine("Verstuurde verkeerslichtstatus:\n" + json);
     }
 }

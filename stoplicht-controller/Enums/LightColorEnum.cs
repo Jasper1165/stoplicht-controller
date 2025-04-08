@@ -4,6 +4,6 @@ namespace stoplicht_controller.Enums
     {
         Red,
         Green,
-        Yellow
+        Orange
     }
 }

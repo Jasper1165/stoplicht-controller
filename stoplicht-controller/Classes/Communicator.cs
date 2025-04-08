@@ -1,15 +1,15 @@
 ﻿using System;
-using System.Text.Json;
-using System.Text.RegularExpressions;
+using System.Collections.Generic;
 using System.Threading;
 using NetMQ;
 using NetMQ.Sockets;
+using Newtonsoft.Json;
 
 namespace stoplicht_controller.Classes
 {
     public class Communicator
     {
-        private readonly PublisherSocket publisher;
+        private PublisherSocket publisher;
         private readonly string publishAddress;
         private readonly string subscribeAddress;
         private readonly string[] subscribeTopics;
@@ -24,7 +24,9 @@ namespace stoplicht_controller.Classes
             this.subscribeAddress = subscribeAddress;
             this.subscribeTopics = subscribeTopics;
             this.publishAddress = publisherAddress;
-            this.publisher = new PublisherSocket();
+
+            publisher = new PublisherSocket();
+            publisher.Bind(this.publishAddress); // Bind de publisher aan het adres
         }
 
         public void StartSubscriber()
@@ -50,7 +52,7 @@ namespace stoplicht_controller.Classes
                         while (true)
                         {
                             string receivedTopic = topic;
-                            string message = Regex.Replace(subscriber.ReceiveFrameString(), @"^[^{]+", "").Trim();
+                            string message = subscriber.ReceiveFrameString().Trim();
                             ProcessMessage(receivedTopic, message);
                         }
                     }
@@ -80,8 +82,7 @@ namespace stoplicht_controller.Classes
                     PriorityVehicleData = message;
                     break;
                 case "tijd":
-                    // PriorityVehicleData = message;
-                    Console.WriteLine($"tijd: {message}");
+                    // Process any time-related message if needed
                     break;
                 default:
                     Console.WriteLine($"Onbekend topic ontvangen: {topic}");
@@ -89,118 +90,22 @@ namespace stoplicht_controller.Classes
             }
         }
 
-        public void StartPublisher(string topic)
+        public void PublishMessage(string topic, object payload)
         {
-            publisher.Bind(this.publishAddress);
-            Console.WriteLine($"Publisher gestart op {this.publishAddress}...");
-
-            new Thread(() =>
+            // Herstel publisher als de socket is disposed
+            if (publisher.IsDisposed)
             {
-                    int count = 1;
-                    while (true)
-                    {
-                    // JSON structuur behouden met Dictionary
-                    var statusUpdate = new Dictionary<string, object>
-                    {
-                        { "8.1", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                { "achter", false }
-                            }
-                        },
-                        { "6.1", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                { "achter", false }
-                            }
-                        },
-                        { "1.1", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                { "achter", true }
-                            }
-                        },
-                        { "2.2", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                { "achter", false }
-                            }
-                        },
-                        { "11.1", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                { "achter", true }
-                            }
-                        },
-                        { "32.1", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                // { "achter", true }
-                            }
-                        },
-                        { "32.2", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                // { "achter", true }
-                            }
-                        },
-                        { "35.1", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                // { "achter", true }
-                            }
-                        },
-                        { "35.2", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                // { "achter", true }
-                            }
-                        },
-                        { "36", new Dictionary<string, object>
-                            {
-                                { "voor", true },
-                                // { "achter", true }
-                            }
-                        }
-                    };
+                publisher = new PublisherSocket();
+                publisher.Bind(this.publishAddress);
+                Console.WriteLine($"Publisher opnieuw verbonden met {publishAddress}");
+            }
 
-                    // dummy json for priority vehicle data:
-                    // var statusUpdate = new Dictionary<string, object>
-                    // {
-                    //     { "queue", new List<Dictionary<string, object>>
-                    //         {
-                    //             new Dictionary<string, object>
-                    //             {
-                    //                 { "baan", "8.2" },
-                    //                 { "simulatie_tijd_ms", 1231456352542 },
-                    //                 { "prioriteit", 1 }
-                    //             },
-                    //             new Dictionary<string, object>
-                    //             {
-                    //                 { "baan", "3.1" },
-                    //                 { "simulatie_tijd_ms", 1231456650000 },
-                    //                 { "prioriteit", 2 }
-                    //             },
-                    //             new Dictionary<string, object>
-                    //             {
-                    //                 { "baan", "1.1" },
-                    //                 { "simulatie_tijd_ms", 1231456650000 },
-                    //                 { "prioriteit", 1 }
-                    //             }
-                    //         }
-                    //     }
-                    // };
+            // Verwerk JSON payload
+            string jsonMessage = JsonConvert.SerializeObject(payload, Formatting.Indented);
 
-                    string jsonMessage = JsonSerializer.Serialize(statusUpdate);
-
-                    publisher
-                    .SendMoreFrame(topic)
-                    .SendFrame(jsonMessage);
-
-                    count++;
-                    Thread.Sleep(100);
-                }
-            }).Start();
+            // Verstuur topic + bericht als multipart
+            publisher.SendMoreFrame(topic).SendFrame(jsonMessage);
+            // Console.WriteLine($"Bericht verzonden naar topic '{topic}': {jsonMessage}");
         }
     }
 }
