@@ -14,9 +14,9 @@ class Program
     static public Bridge Bridge { get; set; } = new Bridge();
     static public List<Direction> PriorityVehicleQueue { get; set; } = new List<Direction>();
 
-    static string subscriberAddress = "tcp://10.121.17.233:5556";
-    static string publisherAddress = "tcp://*:5557";
-    static string[] topics = { "sensoren_rijbaan", "tijd", "voorrangsvoertuig" };
+    static string subscriberAddress = "tcp://10.121.17.119:5556";
+    static string publisherAddress = "tcp://10.121.17.233:5557";
+    static string[] topics = { "sensoren_rijbaan", "tijd", "voorrangsvoertuig"};
     static Communicator communicator = new Communicator(subscriberAddress, publisherAddress, topics);
 
     // Duur in milliseconden:

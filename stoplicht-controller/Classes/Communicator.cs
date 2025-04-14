@@ -53,6 +53,7 @@ namespace stoplicht_controller.Classes
                         {
                             string receivedTopic = topic;
                             string message = subscriber.ReceiveFrameString().Trim();
+                            Console.WriteLine($"Bericht ontvangen op topic '{receivedTopic}': {message}");
                             ProcessMessage(receivedTopic, message);
                         }
                     }
@@ -82,6 +83,7 @@ namespace stoplicht_controller.Classes
                     PriorityVehicleData = message;
                     break;
                 case "tijd":
+                    // Console.WriteLine($"Tijd bericht ontvangen: {message}");
                     // Process any time-related message if needed
                     break;
                 default:
