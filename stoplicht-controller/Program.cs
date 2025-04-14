@@ -14,9 +14,9 @@ class Program
     static public Bridge Bridge { get; set; } = new Bridge();
     static public List<Direction> PriorityVehicleQueue { get; set; } = new List<Direction>();
 
-    static string subscriberAddress = "tcp://10.121.17.119:5556";
-    static string publisherAddress = "tcp://10.121.17.233:5557";
-    static string[] topics = { "sensoren_rijbaan", "tijd", "voorrangsvoertuig"};
+    static string subscriberAddress = "tcp://10.121.17.233:5557";
+    static string publisherAddress = "tcp://10.121.17.233:5556";
+    static string[] topics = { "sensoren_rijbaan", "tijd", "voorrangsvoertuig" };
     static Communicator communicator = new Communicator(subscriberAddress, publisherAddress, topics);
 
     // Duur in milliseconden:
@@ -25,7 +25,7 @@ class Program
     private const int SHORT_GREEN_DURATION = 3000;      // 3 seconden groen bij weinig verkeer
     private const int PRIORITY_THRESHOLD = 3;           // Drempel voor standaard groen
     private const int HIGH_PRIORITY_THRESHOLD = 6;      // Drempel voor file (verlengde groen)
-    private const double AGING_SCALE_SECONDS = 7;      // 1 extra prioriteitspunt per 10 seconden wachten
+    private const double AGING_SCALE_SECONDS = 7;       // 1 extra prioriteitspunt per 7 seconden wachten
 
     private static DateTime lastSwitchTime = DateTime.Now;
     private static DateTime lastOrangeTime = DateTime.Now;
@@ -38,11 +38,9 @@ class Program
     static void Main()
     {
         LoadIntersectionData();
-        // Initialiseer aging voor alle richtingen:
-        foreach(var direction in Directions)
-        {
+        foreach (var direction in Directions)
             lastGreenTimes[direction.Id] = DateTime.Now;
-        }
+
         communicator.StartSubscriber();
 
         if (Directions.Any())
@@ -54,7 +52,6 @@ class Program
         while (true)
         {
             Update();
-            // Console.WriteLine(communicator.LaneSensorData);
             Thread.Sleep(500);
         }
     }
@@ -63,6 +60,8 @@ class Program
     {
         ProcessSensorMessage();
         ProcessPriorityVehicleMessage();
+        // Afhandeling voorrangsvoertuigen (prio meldingen) 1 voor 1
+        HandlePriorityVehicles();
         UpdateTrafficLights();
     }
 
@@ -86,11 +85,8 @@ class Program
         if (currentGreenDirections.Any())
         {
             int sumEffectivePriority = currentGreenDirections.Sum(d => GetEffectivePriority(d));
-            int dynamicGreenDuration = DEFAULT_GREEN_DURATION;
-            if (sumEffectivePriority >= HIGH_PRIORITY_THRESHOLD)
-                dynamicGreenDuration += 2000;
-            else if (sumEffectivePriority < PRIORITY_THRESHOLD)
-                dynamicGreenDuration = SHORT_GREEN_DURATION;
+            int dynamicGreenDuration = sumEffectivePriority >= HIGH_PRIORITY_THRESHOLD ? DEFAULT_GREEN_DURATION + 2000 :
+                                       sumEffectivePriority < PRIORITY_THRESHOLD ? SHORT_GREEN_DURATION : DEFAULT_GREEN_DURATION;
 
             if (timeSinceGreen >= dynamicGreenDuration)
             {
@@ -100,7 +96,6 @@ class Program
             }
             else
             {
-                // Probeer extra, niet-conflicterende richtingen toe te voegen aan de huidige groene groep
                 var extraCandidates = GetExtraGreenCandidates();
                 if (extraCandidates.Any())
                 {
@@ -108,7 +103,6 @@ class Program
                     {
                         currentGreenDirections.Add(extra);
                         extra.Color = LightColor.Green;
-                        // Update aging van de toegevoegde richting
                         lastGreenTimes[extra.Id] = DateTime.Now;
                         Console.WriteLine($"Extra direction {extra.Id} toegevoegd aan groen met effectieve prioriteit {GetEffectivePriority(extra)}.");
                     }
@@ -119,6 +113,7 @@ class Program
             return;
         }
 
+        // Als geen enkele richting groen is, wissel over naar een nieuwe groene groep.
         if (!currentGreenDirections.Any())
         {
             SwitchTrafficLights();
@@ -128,7 +123,6 @@ class Program
 
     private static List<Direction> GetExtraGreenCandidates()
     {
-        // Verkrijg alle beschikbare richtingen met prioriteit > 0, op basis van effectieve prioriteit
         var candidates = Directions
             .Where(d => GetPriority(d) > 0 && !currentGreenDirections.Contains(d))
             .OrderByDescending(d => GetEffectivePriority(d))
@@ -138,9 +132,7 @@ class Program
         var extraCandidates = new List<Direction>();
         foreach (var candidate in candidates)
         {
-            bool conflict = currentGreenDirections.Concat(extraCandidates)
-                .Any(green => HasConflict(green, candidate));
-            if (!conflict)
+            if (!currentGreenDirections.Concat(extraCandidates).Any(green => HasConflict(green, candidate)))
                 extraCandidates.Add(candidate);
         }
         return extraCandidates;
@@ -179,6 +171,7 @@ class Program
             return;
         }
 
+        // Zet oude groene richtingen op rood.
         foreach (var dir in currentGreenDirections)
         {
             dir.Color = LightColor.Red;
@@ -198,6 +191,7 @@ class Program
 
     private static bool HasConflict(Direction d1, Direction d2)
     {
+        // Indien een van beide geen intersections heeft, is er geen conflict.
         if (!d1.Intersections.Any() || !d2.Intersections.Any())
             return false;
         return d1.Intersections.Contains(d2.Id) || d2.Intersections.Contains(d1.Id);
@@ -226,16 +220,12 @@ class Program
 
     private static int GetPriority(Direction direction)
     {
-        // Basisprioriteit op basis van sensorgegevens (file = 5, enkelvoud = 1)
         int priority = 0;
         foreach (var trafficLight in direction.TrafficLights)
         {
             bool front = trafficLight.Sensors.Any(s => s.Position == SensorPosition.Front && s.IsActivated);
             bool back = trafficLight.Sensors.Any(s => s.Position == SensorPosition.Back && s.IsActivated);
-            if (front && back)
-                priority += 5;
-            else if (front || back)
-                priority += 1;
+            priority += front && back ? 5 : (front || back ? 1 : 0);
         }
         return priority;
     }
@@ -244,14 +234,12 @@ class Program
     private static int GetEffectivePriority(Direction direction)
     {
         int basePriority = GetPriority(direction);
-        DateTime lastGreen;
-        if (!lastGreenTimes.TryGetValue(direction.Id, out lastGreen))
+        if (!lastGreenTimes.TryGetValue(direction.Id, out DateTime lastGreen))
         {
             lastGreen = DateTime.Now;
             lastGreenTimes[direction.Id] = lastGreen;
         }
-        double waitingTimeSec = (DateTime.Now - lastGreen).TotalSeconds;
-        int agingBonus = (int)(waitingTimeSec / AGING_SCALE_SECONDS);
+        int agingBonus = (int)((DateTime.Now - lastGreen).TotalSeconds / AGING_SCALE_SECONDS);
         return basePriority + agingBonus;
     }
 
@@ -262,19 +250,80 @@ class Program
         var priorityVehicleData = JsonConvert.DeserializeObject<Dictionary<string, List<Dictionary<string, object>>>>(communicator.PriorityVehicleData);
         if (priorityVehicleData == null || !priorityVehicleData.ContainsKey("queue"))
             return;
-        var queue = priorityVehicleData["queue"];
-        foreach (var item in queue)
+        foreach (var item in priorityVehicleData["queue"])
         {
             if (!item.TryGetValue("baan", out var baanObj) || !item.TryGetValue("prioriteit", out var priorityObj))
                 continue;
+
             string baan = baanObj.ToString();
             if (!int.TryParse(priorityObj.ToString(), out int priority))
                 continue;
-            var directionId = int.Parse(baan.Split('.')[0]);
+
+            int directionId = int.Parse(baan.Split('.')[0]);
             if (!PriorityVehicleQueue.Any(d => d.Id == directionId))
-            {
                 PriorityVehicleQueue.Add(new Direction { Id = directionId, Priority = priority });
+        }
+    }
+
+    // Nieuwe methode voor het afhandelen van voorrangsvoertuigen
+    // Deze methode verwerkt meldingen 1 voor 1 en houdt rekening met de prioriteit:
+    // - Prio 1: Voor voorrangsvoertuigen. Deze overschrijven de normale cyclus: alle conflicterende richtingen worden op rood gezet, de betreffende richting krijgt groen,
+    //          en na een korte periode (hier 3 seconden) gaat de reguliere cyclus verder.
+    // - Prio 2: Voor openbaar vervoer. Indien mogelijk wordt de richting toegevoegd aan de huidige groene groep (mits er geen conflict is) en krijgt zo voorrang.
+    private static void HandlePriorityVehicles()
+    {
+        if (!PriorityVehicleQueue.Any())
+            return;
+
+        // Sorteer op prioriteit (1 vóór 2) en vervolgens op ID.
+        var nextVehicle = PriorityVehicleQueue.OrderBy(x => x.Priority).ThenBy(x => x.Id).First();
+        int prio = nextVehicle.Priority ?? 0;
+        int directionId = nextVehicle.Id;
+        var prioDirection = Directions.FirstOrDefault(d => d.Id == directionId);
+        if (prioDirection == null)
+        {
+            PriorityVehicleQueue.Remove(nextVehicle);
+            return;
+        }
+
+        if (prio == 1)
+        {
+            Console.WriteLine($"Handling priority 1 vehicle in direction {directionId}");
+            foreach (var direction in Directions.Where(d => d.Id != prioDirection.Id && HasConflict(prioDirection, d)))
+            {
+                direction.Color = LightColor.Red;
+                Console.WriteLine($"Direction {direction.Id} (conflict met {directionId}) gezet op rood.");
             }
+            prioDirection.Color = LightColor.Green;
+            currentGreenDirections = new List<Direction> { prioDirection };
+            currentOrangeDirections.Clear();
+            SendTrafficLightStates();
+
+            Thread.Sleep(3000); // Wachtperiode voor afhandeling
+
+            prioDirection.Color = LightColor.Red;
+            Console.WriteLine($"Priority 1 vehicle in direction {directionId} is afgehandeld, terug naar normale cyclus.");
+            PriorityVehicleQueue.Remove(nextVehicle);
+            SwitchTrafficLights();
+            SendTrafficLightStates();
+        }
+        else if (prio == 2)
+        {
+            Console.WriteLine($"Handling priority 2 vehicle in direction {directionId}");
+            if (!currentGreenDirections.Contains(prioDirection) && !currentGreenDirections.Any(green => HasConflict(green, prioDirection)))
+            {
+                currentGreenDirections.Add(prioDirection);
+                prioDirection.Color = LightColor.Green;
+                Console.WriteLine($"Priority 2: Direction {directionId} toegevoegd aan de huidige groene groep.");
+                SendTrafficLightStates();
+            }
+            else
+            {
+                Console.WriteLine($"Priority 2: Direction {directionId} conflicteert met de huidige groene groep, melding blijft in wachtrij.");
+                return;
+            }
+            Thread.Sleep(3000);
+            PriorityVehicleQueue.Remove(nextVehicle);
         }
     }
 
@@ -282,6 +331,7 @@ class Program
     {
         if (string.IsNullOrEmpty(communicator.LaneSensorData))
             return;
+
         Dictionary<string, Dictionary<string, bool>> sensorData = null;
         try
         {
@@ -297,12 +347,14 @@ class Program
             Console.WriteLine("Gereserveerde sensor data is null.");
             return;
         }
+
         foreach (var (trafficLightId, sensors) in sensorData)
         {
             var trafficLight = Directions.SelectMany(d => d.TrafficLights)
                                          .FirstOrDefault(tl => tl.Id == trafficLightId);
             if (trafficLight == null)
                 continue;
+
             foreach (var sensor in trafficLight.Sensors)
             {
                 if (sensor.Position == SensorPosition.Front && sensors.TryGetValue("voor", out bool frontValue))
@@ -323,18 +375,20 @@ class Program
         }
         string jsonContent = File.ReadAllText(jsonFilePath);
         JObject jsonObject = JObject.Parse(jsonContent);
+
         var groupsData = jsonObject["groups"]?.ToObject<Dictionary<string, JObject>>();
         if (groupsData == null)
             return;
+
         foreach (var (groupIdStr, groupObj) in groupsData)
         {
             if (!int.TryParse(groupIdStr, out int groupId))
                 continue;
             var direction = new Direction { Id = groupId };
+
             if (groupObj["intersects_with"] is JArray intersectsArray)
-            {
                 direction.Intersections = intersectsArray.Select(i => i.ToObject<int>()).ToList();
-            }
+
             if (groupObj["lanes"] is JObject lanesObj)
             {
                 foreach (var laneProperty in lanesObj.Properties())
@@ -362,20 +416,19 @@ class Program
         var sensorData = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);
         if (sensorData == null)
             return;
-        var stateDict = new Dictionary<string, string>();
-        foreach (var (trafficLightId, _) in sensorData)
-        {
-            var trafficLight = Directions.SelectMany(d => d.TrafficLights)
-                                         .FirstOrDefault(tl => tl.Id == trafficLightId);
-            if (trafficLight == null)
-                continue;
-            var direction = Directions.FirstOrDefault(d => d.TrafficLights.Contains(trafficLight));
-            if (direction == null)
-                continue;
-            string state = direction.Color == LightColor.Green ? "groen" :
-                           direction.Color == LightColor.Orange ? "oranje" : "rood";
-            stateDict[trafficLight.Id] = state;
-        }
+
+        var stateDict = sensorData.Keys
+            .Select(tlId => Directions.SelectMany(d => d.TrafficLights)
+                                        .FirstOrDefault(tl => tl.Id == tlId))
+            .Where(tl => tl != null)
+            .Select(tl => new
+            {
+                Id = tl.Id,
+                State = Directions.FirstOrDefault(d => d.TrafficLights.Contains(tl))?.Color == LightColor.Green ? "groen" :
+                        Directions.FirstOrDefault(d => d.TrafficLights.Contains(tl))?.Color == LightColor.Orange ? "oranje" : "rood"
+            })
+            .ToDictionary(x => x.Id, x => x.State);
+
         communicator.PublishMessage("stoplichten", stateDict);
     }
 }

@@ -53,7 +53,6 @@ namespace stoplicht_controller.Classes
                         {
                             string receivedTopic = topic;
                             string message = subscriber.ReceiveFrameString().Trim();
-                            Console.WriteLine($"Bericht ontvangen op topic '{receivedTopic}': {message}");
                             ProcessMessage(receivedTopic, message);
                         }
                     }
