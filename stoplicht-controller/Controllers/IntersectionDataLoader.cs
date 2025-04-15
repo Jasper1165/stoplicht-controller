@@ -29,17 +29,21 @@ namespace stoplicht_controller.Managers
             {
                 if (!int.TryParse(groupIdStr, out int groupId))
                     continue;
+
+                // Hier wordt er een Direction (of Group) aangemaakt op basis van het JSON object.
                 var direction = new Direction { Id = groupId };
 
                 if (groupObj["intersects_with"] is JArray intersectsArray)
                     direction.Intersections = intersectsArray.Select(i => i.ToObject<int>()).ToList();
 
+                // Inlezen van lanes
                 if (groupObj["lanes"] is JObject lanesObj)
                 {
                     foreach (var laneProperty in lanesObj.Properties())
                     {
                         if (!int.TryParse(laneProperty.Name, out int laneId))
                             continue;
+
                         var trafficLight = new TrafficLight { Id = $"{groupId}.{laneId}" };
                         trafficLight.Sensors.AddRange(new List<Sensor>
                         {
@@ -49,6 +53,49 @@ namespace stoplicht_controller.Managers
                         direction.TrafficLights.Add(trafficLight);
                     }
                 }
+
+                // EXTRA: Inlezen van transition_requirements indien aanwezig
+                // if (groupObj["transition_requirements"] != null)
+                // {
+                //     // Verwacht een structuur met keys zoals "green" of "red" en een array met condities
+                //     var requirementsObj = groupObj["transition_requirements"] as JObject;
+                //     if (requirementsObj != null)
+                //     {
+                //         // Zorg ervoor dat de property in je model bestaat (bijv. in een Group-klasse)
+                //         // Hier casten we de transition_requirements naar een Dictionary<string, List<TransitionCondition>>
+                //         try
+                //         {
+                //             var requirements = requirementsObj.ToObject<Dictionary<string, List<TransitionCondition>>>();
+                //             // Stel de requirements in. Aangezien je nu wellicht met Direction werkt, kun je
+                //             // de property eventueel toevoegen aan Direction of aan een aparte Group instantie.
+                //             // Hieronder als voorbeeld:
+                //             direction.TransitionRequirements = requirements;
+                //         }
+                //         catch (Exception ex)
+                //         {
+                //             Console.WriteLine($"Fout bij het inlezen van transition_requirements: {ex.Message}");
+                //         }
+                //     }
+                // }
+
+                // EXTRA: Inlezen van transition_blockers indien aanwezig
+                // if (groupObj["transition_blockers"] != null)
+                // {
+                //     var blockersObj = groupObj["transition_blockers"] as JObject;
+                //     if (blockersObj != null)
+                //     {
+                //         try
+                //         {
+                //             var blockers = blockersObj.ToObject<Dictionary<string, List<TransitionCondition>>>();
+                //             direction.TransitionBlockers = blockers;
+                //         }
+                //         catch (Exception ex)
+                //         {
+                //             Console.WriteLine($"Fout bij het inlezen van transition_blockers: {ex.Message}");
+                //         }
+                //     }
+                // }
+
                 directions.Add(direction);
             }
 

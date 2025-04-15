@@ -110,6 +110,8 @@ namespace stoplicht_controller.Classes
             // Verwerk JSON payload
             string jsonMessage = JsonConvert.SerializeObject(payload, Formatting.Indented);
 
+            // Console.WriteLine(jsonMessage);
+
             // Verstuur topic + bericht als multipart
             publisher.SendMoreFrame(topic).SendFrame(jsonMessage);
             // Console.WriteLine($"Bericht verzonden naar topic '{topic}': {jsonMessage}");

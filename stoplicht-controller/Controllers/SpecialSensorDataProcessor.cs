@@ -22,11 +22,7 @@ namespace stoplicht_controller.Managers
             while (!token.IsCancellationRequested)
             {
                 string rawData = communicator.SpecialSensorData;
-                if (string.IsNullOrEmpty(rawData))
-                {
-                    // Console.WriteLine("Geen speciale sensor data ontvangen.");
-                }
-                else
+                if (!string.IsNullOrEmpty(rawData))
                 {
                     var data = JsonConvert.DeserializeObject<Dictionary<string, bool>>(rawData);
                     if (data != null)

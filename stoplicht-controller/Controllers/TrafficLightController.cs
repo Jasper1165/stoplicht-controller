@@ -26,6 +26,7 @@ namespace stoplicht_controller.Managers
         private static Dictionary<int, DateTime> lastGreenTimes = new Dictionary<int, DateTime>();
 
         private bool isHandlingPriorityVehicle = false;
+
         private Communicator communicator;
         private List<Direction> directions;
 
@@ -35,18 +36,20 @@ namespace stoplicht_controller.Managers
             this.directions = directions;
         }
 
-        // Wordt bij opstarten aangeroepen zodat voor elke richting de lastGreenTime wordt ingesteld.
+        // Initialiseer de lastGreenTimes voor iedere direction.
         public static void InitializeLastGreenTimes(List<Direction> directions)
         {
             foreach (var direction in directions)
+            {
                 lastGreenTimes[direction.Id] = DateTime.Now;
+            }
         }
 
         public async Task TrafficLightCycleLoop(CancellationToken token)
         {
-            // Initiele schakeling
             if (directions.Any())
             {
+                // Start de cyclus voor de reguliere verkeerslichten
                 SwitchTrafficLights();
                 SendTrafficLightStates();
             }
@@ -59,6 +62,10 @@ namespace stoplicht_controller.Managers
             }
         }
 
+        /// <summary>
+        /// UpdateTrafficLights() handelt de normale stoplichtcyclus af.
+        /// Het gaat hierbij om het wisselen tussen groen, oranje en rood op basis van prioriteiten.
+        /// </summary>
         public void UpdateTrafficLights()
         {
             if (isHandlingPriorityVehicle)
@@ -82,8 +89,10 @@ namespace stoplicht_controller.Managers
             if (currentGreenDirections.Any())
             {
                 int sumEffectivePriority = currentGreenDirections.Sum(d => GetEffectivePriority(d));
-                int dynamicGreenDuration = sumEffectivePriority >= HIGH_PRIORITY_THRESHOLD ? DEFAULT_GREEN_DURATION + 2000 :
-                                           sumEffectivePriority < PRIORITY_THRESHOLD ? SHORT_GREEN_DURATION : DEFAULT_GREEN_DURATION;
+                int dynamicGreenDuration = sumEffectivePriority >= HIGH_PRIORITY_THRESHOLD
+                    ? DEFAULT_GREEN_DURATION + 2000
+                    : sumEffectivePriority < PRIORITY_THRESHOLD ? SHORT_GREEN_DURATION
+                    : DEFAULT_GREEN_DURATION;
 
                 if (timeSinceGreen >= dynamicGreenDuration)
                 {
@@ -93,6 +102,7 @@ namespace stoplicht_controller.Managers
                 }
                 else
                 {
+                    // Voeg indien mogelijk extra richtingen toe die geen conflict hebben
                     var extraCandidates = GetExtraGreenCandidates();
                     if (extraCandidates.Any())
                     {
@@ -110,7 +120,6 @@ namespace stoplicht_controller.Managers
                 return;
             }
 
-            // Geen groene richtingen? Probeer te schakelen.
             if (!currentGreenDirections.Any())
             {
                 SwitchTrafficLights();
@@ -118,6 +127,9 @@ namespace stoplicht_controller.Managers
             }
         }
 
+        /// <summary>
+        /// GetExtraGreenCandidates() bepaalt extra kandidaten voor groen op basis van prioriteit en conflicterende richtingen.
+        /// </summary>
         private List<Direction> GetExtraGreenCandidates()
         {
             var candidates = directions
@@ -135,6 +147,10 @@ namespace stoplicht_controller.Managers
             return extraCandidates;
         }
 
+        /// <summary>
+        /// SwitchTrafficLights() kiest een nieuwe groep van niet-conflicterende richtingen op basis van effectieve prioriteit
+        /// en zet de bijbehorende verkeerslichten op groen.
+        /// </summary>
         private void SwitchTrafficLights()
         {
             var availableDirections = directions
@@ -155,27 +171,22 @@ namespace stoplicht_controller.Managers
                 if (!newGreenGroup.Any(green => HasConflict(green, candidate)))
                     newGreenGroup.Add(candidate);
             }
-
             if (!newGreenGroup.Any())
             {
                 Console.WriteLine("Geen niet-conflicterende richtingen gevonden.");
                 return;
             }
-
             if (newGreenGroup.SequenceEqual(currentGreenDirections))
             {
                 Console.WriteLine("Groene groep blijft ongewijzigd.");
                 return;
             }
-
-            // Zet oude groene richtingen op rood.
             foreach (var dir in currentGreenDirections)
             {
                 dir.Color = LightColor.Red;
                 Console.WriteLine($"Richting {dir.Id} staat op rood.");
             }
             currentGreenDirections.Clear();
-
             currentGreenDirections = newGreenGroup;
             foreach (var dir in currentGreenDirections)
             {
@@ -186,6 +197,9 @@ namespace stoplicht_controller.Managers
             lastSwitchTime = DateTime.Now;
         }
 
+        /// <summary>
+        /// Controleert of twee richtingen een conflict hebben op basis van hun Intersections.
+        /// </summary>
         private bool HasConflict(Direction d1, Direction d2)
         {
             if (!d1.Intersections.Any() || !d2.Intersections.Any())
@@ -193,6 +207,9 @@ namespace stoplicht_controller.Managers
             return d1.Intersections.Contains(d2.Id) || d2.Intersections.Contains(d1.Id);
         }
 
+        /// <summary>
+        /// Zet alle huidige groene richtingen op oranje.
+        /// </summary>
         private void SetLightsToOrange()
         {
             foreach (var dir in currentGreenDirections)
@@ -204,6 +221,9 @@ namespace stoplicht_controller.Managers
             currentGreenDirections.Clear();
         }
 
+        /// <summary>
+        /// Zet alle huidige oranje richtingen op rood.
+        /// </summary>
         private void SetLightsToRed()
         {
             foreach (var dir in currentOrangeDirections)
@@ -214,6 +234,9 @@ namespace stoplicht_controller.Managers
             currentOrangeDirections.Clear();
         }
 
+        /// <summary>
+        /// Bereken de prioriteit voor een richting op basis van sensoractiviteit.
+        /// </summary>
         private int GetPriority(Direction direction)
         {
             int priority = 0;
@@ -221,11 +244,14 @@ namespace stoplicht_controller.Managers
             {
                 bool front = trafficLight.Sensors.Any(s => s.Position == SensorPosition.Front && s.IsActivated);
                 bool back = trafficLight.Sensors.Any(s => s.Position == SensorPosition.Back && s.IsActivated);
-                priority += front && back ? 5 : (front || back ? 1 : 0);
+                priority += (front && back) ? 5 : (front || back ? 1 : 0);
             }
             return priority;
         }
 
+        /// <summary>
+        /// Berekent de effectieve prioriteit op basis van basisprioriteit en wachttijd (aging).
+        /// </summary>
         private int GetEffectivePriority(Direction direction)
         {
             int basePriority = GetPriority(direction);
@@ -234,10 +260,14 @@ namespace stoplicht_controller.Managers
             return basePriority + agingBonus;
         }
 
+        /// <summary>
+        /// Verwerkt binnenkomende sensor-data en werkt de sensorstatus bij.
+        /// </summary>
         private void ProcessSensorMessage()
         {
             if (string.IsNullOrEmpty(communicator.LaneSensorData))
                 return;
+
             Dictionary<string, Dictionary<string, bool>> sensorData = null;
             try
             {
@@ -253,14 +283,12 @@ namespace stoplicht_controller.Managers
                 Console.WriteLine("Sensor data is null.");
                 return;
             }
-
             foreach (var (trafficLightId, sensors) in sensorData)
             {
                 var trafficLight = directions.SelectMany(d => d.TrafficLights)
                                              .FirstOrDefault(tl => tl.Id == trafficLightId);
                 if (trafficLight == null)
                     continue;
-
                 foreach (var sensor in trafficLight.Sensors)
                 {
                     if (sensor.Position == SensorPosition.Front && sensors.TryGetValue("voor", out bool frontValue))
@@ -271,6 +299,9 @@ namespace stoplicht_controller.Managers
             }
         }
 
+        /// <summary>
+        /// Stuurt de huidige status van de verkeerslichten door naar de communicator.
+        /// </summary>
         private void SendTrafficLightStates()
         {
             if (string.IsNullOrEmpty(communicator.LaneSensorData))
