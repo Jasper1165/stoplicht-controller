@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using stoplicht_controller.Classes;
@@ -14,7 +15,7 @@ class Program
     static public Bridge Bridge { get; set; } = new Bridge();
     static public List<Direction> PriorityVehicleQueue { get; set; } = new List<Direction>();
 
-    static string subscriberAddress = "tcp://10.121.17.233:5556";
+    static string subscriberAddress = "tcp://10.121.17.233:5556"; // 84 (Marnick)
     static string publisherAddress = "tcp://10.121.17.233:5555";
     static string[] topics = { "sensoren_rijbaan", "tijd", "voorrangsvoertuig" };
     static Communicator communicator = new Communicator(subscriberAddress, publisherAddress, topics);
@@ -35,38 +36,67 @@ class Program
     // Houdt per richting (ID) bij wanneer deze voor het laatst groen was.
     private static Dictionary<int, DateTime> lastGreenTimes = new Dictionary<int, DateTime>();
 
-    static void Main()
+    private static bool isHandlingPriorityVehicle = false;
+    private static CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+
+    static async Task Main(string[] args)
     {
         LoadIntersectionData();
         foreach (var direction in Directions)
             lastGreenTimes[direction.Id] = DateTime.Now;
 
-        communicator.StartSubscriber();
+        // Start de communicator subscriber in een aparte taak (parallel)
+        Task subscriberTask = Task.Run(() => communicator.StartSubscriber(), cancellationTokenSource.Token);
 
+        // Start de taak voor het afhandelen van prioriteitsvoertuigen
+        Task priorityTask = Task.Run(() => PriorityVehicleHandlerLoop(cancellationTokenSource.Token), cancellationTokenSource.Token);
+
+        // Start de taak voor de verkeerslichtcyclus (sensor updates & stoplichtupdates)
+        Task trafficLightTask = Task.Run(() => TrafficLightCycleLoop(cancellationTokenSource.Token), cancellationTokenSource.Token);
+
+        // Laat de main thread actief blijven
+        Console.WriteLine("Druk op Enter om te stoppen...");
+        Console.ReadLine();
+
+        cancellationTokenSource.Cancel();
+        await Task.WhenAll(subscriberTask, priorityTask, trafficLightTask);
+    }
+
+    // Deze loop draait continu in een aparte taak en handelt prioriteitsvoertuigen af.
+    static void PriorityVehicleHandlerLoop(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            ProcessPriorityVehicleMessage();
+            HandlePriorityVehicles();
+            Thread.Sleep(100);
+        }
+    }
+
+    // Deze taak verwerkt de verkeerslichtcyclus, verwerkt sensor updates en schakelt stoplichten.
+    static void TrafficLightCycleLoop(CancellationToken token)
+    {
+        // Voer een eenmalige initialisatie uit als er richtingen beschikbaar zijn.
         if (Directions.Any())
         {
             SwitchTrafficLights();
             SendTrafficLightStates();
         }
 
-        while (true)
+        while (!token.IsCancellationRequested)
         {
-            Update();
+            ProcessSensorMessage();
+            UpdateTrafficLights();
             Thread.Sleep(500);
         }
     }
 
-    static void Update()
-    {
-        ProcessSensorMessage();
-        ProcessPriorityVehicleMessage();
-        // Afhandeling voorrangsvoertuigen (prio meldingen) 1 voor 1
-        HandlePriorityVehicles();
-        UpdateTrafficLights();
-    }
-
     public static void UpdateTrafficLights()
     {
+        // Als er prioriteitsvoertuigen worden afgehandeld, wordt de normale cyclus gepauzeerd.
+        if (isHandlingPriorityVehicle)
+            return;
+
         DateTime now = DateTime.Now;
         double timeSinceGreen = (now - lastSwitchTime).TotalMilliseconds;
         double timeSinceOrange = (now - lastOrangeTime).TotalMilliseconds;
@@ -113,7 +143,7 @@ class Program
             return;
         }
 
-        // Als geen enkele richting groen is, wissel over naar een nieuwe groene groep.
+        // Als er geen groene richtingen zijn, probeer dan over te schakelen.
         if (!currentGreenDirections.Any())
         {
             SwitchTrafficLights();
@@ -191,7 +221,7 @@ class Program
 
     private static bool HasConflict(Direction d1, Direction d2)
     {
-        // Indien een van beide geen intersections heeft, is er geen conflict.
+        // Als een van beiden geen intersections heeft, is er geen conflict.
         if (!d1.Intersections.Any() || !d2.Intersections.Any())
             return false;
         return d1.Intersections.Contains(d2.Id) || d2.Intersections.Contains(d1.Id);
@@ -230,7 +260,7 @@ class Program
         return priority;
     }
 
-    // Effectieve prioriteit = basisprioriteit plus aging bonus
+    // Effectieve prioriteit: basisprioriteit plus aging bonus.
     private static int GetEffectivePriority(Direction direction)
     {
         int basePriority = GetPriority(direction);
@@ -247,7 +277,19 @@ class Program
     {
         if (string.IsNullOrEmpty(communicator.PriorityVehicleData))
             return;
-        var priorityVehicleData = JsonConvert.DeserializeObject<Dictionary<string, List<Dictionary<string, object>>>>(communicator.PriorityVehicleData);
+
+        Dictionary<string, List<Dictionary<string, object>>> priorityVehicleData = null;
+        try
+        {
+            // Verwijder eventuele prefix, bv. "voorrangsvoertuig", indien aanwezig.
+            string jsonData = communicator.PriorityVehicleData;
+            priorityVehicleData = JsonConvert.DeserializeObject<Dictionary<string, List<Dictionary<string, object>>>>(jsonData);
+        }
+        catch (JsonReaderException ex)
+        {
+            Console.WriteLine($"Fout bij het deserialiseren van voorrangsvoertuig data: {ex.Message}");
+            return;
+        }
         if (priorityVehicleData == null || !priorityVehicleData.ContainsKey("queue"))
             return;
         foreach (var item in priorityVehicleData["queue"])
@@ -265,17 +307,12 @@ class Program
         }
     }
 
-    // Nieuwe methode voor het afhandelen van voorrangsvoertuigen
-    // Deze methode verwerkt meldingen 1 voor 1 en houdt rekening met de prioriteit:
-    // - Prio 1: Voor voorrangsvoertuigen. Deze overschrijven de normale cyclus: alle conflicterende richtingen worden op rood gezet, de betreffende richting krijgt groen,
-    //          en na een korte periode (hier 3 seconden) gaat de reguliere cyclus verder.
-    // - Prio 2: Voor openbaar vervoer. Indien mogelijk wordt de richting toegevoegd aan de huidige groene groep (mits er geen conflict is) en krijgt zo voorrang.
+    // Methode voor het afhandelen van voorrangsvoertuigen. Deze onderbreekt de normale cyclus indien nodig.
     private static void HandlePriorityVehicles()
     {
         if (!PriorityVehicleQueue.Any())
             return;
 
-        // Sorteer op prioriteit (1 vóór 2) en vervolgens op ID.
         var nextVehicle = PriorityVehicleQueue.OrderBy(x => x.Priority).ThenBy(x => x.Id).First();
         int prio = nextVehicle.Priority ?? 0;
         int directionId = nextVehicle.Id;
@@ -285,6 +322,8 @@ class Program
             PriorityVehicleQueue.Remove(nextVehicle);
             return;
         }
+
+        isHandlingPriorityVehicle = true;
 
         if (prio == 1)
         {
@@ -299,13 +338,15 @@ class Program
             currentOrangeDirections.Clear();
             SendTrafficLightStates();
 
-            Thread.Sleep(3000); // Wachtperiode voor afhandeling
+            Thread.Sleep(3000);
 
             prioDirection.Color = LightColor.Red;
-            Console.WriteLine($"Priority 1 vehicle in direction {directionId} is afgehandeld, terug naar normale cyclus.");
+            Console.WriteLine($"Priority 1 vehicle in direction {directionId} is afgehandeld.");
             PriorityVehicleQueue.Remove(nextVehicle);
-            SwitchTrafficLights();
-            SendTrafficLightStates();
+
+            lastSwitchTime = DateTime.Now;
+            lastOrangeTime = DateTime.Now;
+            isHandlingPriorityVehicle = false;
         }
         else if (prio == 2)
         {
@@ -320,11 +361,21 @@ class Program
             else
             {
                 Console.WriteLine($"Priority 2: Direction {directionId} conflicteert met de huidige groene groep, melding blijft in wachtrij.");
+                isHandlingPriorityVehicle = false;
                 return;
             }
+
             Thread.Sleep(3000);
+
+            prioDirection.Color = LightColor.Red;
+            currentGreenDirections.Remove(prioDirection);
             PriorityVehicleQueue.Remove(nextVehicle);
+            lastSwitchTime = DateTime.Now;
+            lastOrangeTime = DateTime.Now;
+            isHandlingPriorityVehicle = false;
         }
+
+        communicator.PriorityVehicleData = null;
     }
 
     static void ProcessSensorMessage()
@@ -411,6 +462,7 @@ class Program
 
     static void SendTrafficLightStates()
     {
+        // Als er geen sensor data is, wordt er geen update verstuurd.
         if (string.IsNullOrEmpty(communicator.LaneSensorData))
             return;
         var sensorData = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);

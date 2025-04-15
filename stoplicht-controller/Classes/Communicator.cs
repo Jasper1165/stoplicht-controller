@@ -18,6 +18,7 @@ namespace stoplicht_controller.Classes
         public string? LaneSensorData { get; set; }
         public string? SpecialSensorData { get; set; }
         public string? PriorityVehicleData { get; set; }
+        private readonly object _dataLock = new object();
 
         public Communicator(string subscribeAddress, string publisherAddress, string[] subscribeTopics)
         {
@@ -51,8 +52,11 @@ namespace stoplicht_controller.Classes
 
                         while (true)
                         {
-                            string receivedTopic = topic;
+                            // Lees het eerste frame, dat de topic bevat
+                            string receivedTopic = subscriber.ReceiveFrameString().Trim();
+                            // Lees het tweede frame, dat de payload bevats
                             string message = subscriber.ReceiveFrameString().Trim();
+                            // Console.WriteLine($"Bericht ontvangen op topic '{receivedTopic}': {message}");
                             ProcessMessage(receivedTopic, message);
                         }
                     }
@@ -67,27 +71,30 @@ namespace stoplicht_controller.Classes
             subscribeThread.Start();
         }
 
+
         private void ProcessMessage(string topic, string message)
         {
-            switch (topic)
+            lock (_dataLock)
             {
-                case "sensoren_rijbaan":
-                    LaneSensorData = message;
-                    break;
-                case "sensoren_speciaal":
-                    SpecialSensorData = message;
-                    Console.WriteLine($"SpecialSensorData updated: {SpecialSensorData}");
-                    break;
-                case "voorrangsvoertuig":
-                    PriorityVehicleData = message;
-                    break;
-                case "tijd":
-                    // Console.WriteLine($"Tijd bericht ontvangen: {message}");
-                    // Process any time-related message if needed
-                    break;
-                default:
-                    Console.WriteLine($"Onbekend topic ontvangen: {topic}");
-                    break;
+                switch (topic)
+                {
+                    case "sensoren_rijbaan":
+                        LaneSensorData = message;
+                        break;
+                    case "sensoren_speciaal":
+                        SpecialSensorData = message;
+                        Console.WriteLine($"SpecialSensorData updated: {SpecialSensorData}");
+                        break;
+                    case "voorrangsvoertuig":
+                        PriorityVehicleData = message;
+                        break;
+                    case "tijd":
+                        // Verwerk tijd bericht indien nodig
+                        break;
+                    default:
+                        Console.WriteLine($"Onbekend topic ontvangen: {topic}");
+                        break;
+                }
             }
         }
 
