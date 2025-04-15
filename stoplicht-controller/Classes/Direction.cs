@@ -10,6 +10,8 @@ namespace stoplicht_controller.Classes
                 public List<int> Intersections { get; set; } = new List<int>();
                 public List<TrafficLight> TrafficLights { get; set; } = new List<TrafficLight>();
 
+
+
                 public int? Priority { get; set; } = null;
 
         }

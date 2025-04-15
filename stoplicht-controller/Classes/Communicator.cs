@@ -83,7 +83,6 @@ namespace stoplicht_controller.Classes
                         break;
                     case "sensoren_speciaal":
                         SpecialSensorData = message;
-                        Console.WriteLine($"SpecialSensorData updated: {SpecialSensorData}");
                         break;
                     case "voorrangsvoertuig":
                         PriorityVehicleData = message;
