@@ -1,26 +1,13 @@
-
-using System;
-using Newtonsoft.Json;
-namespace stoplicht_controller.Classes;
 public class Group
 {
-    public int Id { get; set; }
+    // Initialiseer de collecties met een lege lijst zodat ze nooit null zijn.
+    public List<int> IntersectsWith { get; set; } = new List<int>();
+    public List<int> IsInverseOf { get; set; } = new List<int>();
+    public List<int> ExtendsTo { get; set; } = new List<int>();
 
-    [JsonProperty("intersects_with")]
-    public List<int> IntersectsWith { get; set; }
+    // Als VehicleType een string is en je verwacht dat deze wel altijd een waarde heeft:
+    public string VehicleType { get; set; } = string.Empty;
 
-    [JsonProperty("is_inverse_of")]
-    public object IsInverseOf { get; set; }
-
-    [JsonProperty("extends_to")]
-    public object ExtendsTo { get; set; }
-
-    [JsonProperty("vehicle_type")]
-    public List<string> VehicleType { get; set; }
-
-    [JsonProperty("lanes")]
-    public Dictionary<string, TrafficLight> TrafficLights { get; set; }
-
-    [JsonProperty("is_physical_barrier")]
-    public bool IsPhysicalBarrier { get; set; }
+    // Als TrafficLights een lijst is:
+    public List<TrafficLight> TrafficLights { get; set; } = new List<TrafficLight>();
 }

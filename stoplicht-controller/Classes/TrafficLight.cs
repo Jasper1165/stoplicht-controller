@@ -1,11 +1,5 @@
-﻿using System;
-namespace stoplicht_controller.Classes
+﻿public class TrafficLight
 {
-	public class TrafficLight
-	{
-        // De Id wordt hier gedefinieerd als een integer; we berekenen hem door group en lane te combineren
-        public string Id { get; set; }
-        public List<Sensor> Sensors { get; set; } = new List<Sensor>();
-	}
+    public string Id { get; set; } = string.Empty;
+    public List<Sensor> Sensors { get; set; } = new List<Sensor>();
 }
-
