@@ -10,4 +10,10 @@ public class Group
 
     // Als TrafficLights een lijst is:
     public List<TrafficLight> TrafficLights { get; set; } = new List<TrafficLight>();
+
+    // Nieuwe properties voor overgangscondities: gebruik een woordenboek met keys (bijv. "green", "red") en de lijst met condities.
+    public Dictionary<string, List<TransitionCondition>> TransitionRequirements { get; set; }
+        = new Dictionary<string, List<TransitionCondition>>();
+    public Dictionary<string, List<TransitionCondition>> TransitionBlockers { get; set; }
+        = new Dictionary<string, List<TransitionCondition>>();
 }

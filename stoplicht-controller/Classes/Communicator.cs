@@ -18,6 +18,7 @@ namespace stoplicht_controller.Classes
         public string? LaneSensorData { get; set; }
         public string? SpecialSensorData { get; set; }
         public string? PriorityVehicleData { get; set; }
+        public string? BridgeSensorData { get; set; }
         private readonly object _dataLock = new object();
 
         public Communicator(string subscribeAddress, string publisherAddress, string[] subscribeTopics)
@@ -83,10 +84,12 @@ namespace stoplicht_controller.Classes
                         break;
                     case "sensoren_speciaal":
                         SpecialSensorData = message;
-                        Console.WriteLine($"SpecialSensorData updated: {SpecialSensorData}");
                         break;
                     case "voorrangsvoertuig":
                         PriorityVehicleData = message;
+                        break;
+                    case "sensoren_bruggen":
+                        BridgeSensorData = message;
                         break;
                     case "tijd":
                         // Verwerk tijd bericht indien nodig
@@ -110,6 +113,8 @@ namespace stoplicht_controller.Classes
 
             // Verwerk JSON payload
             string jsonMessage = JsonConvert.SerializeObject(payload, Formatting.Indented);
+
+            // Console.WriteLine(jsonMessage);
 
             // Verstuur topic + bericht als multipart
             publisher.SendMoreFrame(topic).SendFrame(jsonMessage);
