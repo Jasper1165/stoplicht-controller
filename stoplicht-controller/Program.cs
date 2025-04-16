@@ -16,7 +16,7 @@ class Program
     // Communicator instellingen
     static string subscriberAddress = "tcp://10.121.17.233:5556"; // 84 (Marnick)
     static string publisherAddress = "tcp://10.121.17.233:5555";
-    static string[] topics = { "sensoren_rijbaan", "voorrangsvoertuig", "sensoren_speciaal" };
+    static string[] topics = { "sensoren_rijbaan", "voorrangsvoertuig", "sensoren_speciaal", "sensoren_bruggen" };
     static Communicator communicator = new Communicator(subscriberAddress, publisherAddress, topics);
     static CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
 

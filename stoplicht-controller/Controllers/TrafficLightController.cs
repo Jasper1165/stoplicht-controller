@@ -14,19 +14,18 @@ namespace stoplicht_controller.Managers
         // ================================
         //       CONFIG CONSTANTS
         // ================================
-        private const int ORANGE_DURATION = 2000;         // 2 seconden oranje voor 'gewone' richtingen
-        private const int DEFAULT_GREEN_DURATION = 8000;  // 8 seconden normaal groen
-        private const int SHORT_GREEN_DURATION = 3000;    // 3 seconden kort groen
+        private const int ORANGE_DURATION = 2000;
+        private const int DEFAULT_GREEN_DURATION = 8000;
+        private const int SHORT_GREEN_DURATION = 3000;
         private const int PRIORITY_THRESHOLD = 3;
         private const int HIGH_PRIORITY_THRESHOLD = 6;
-        private const double AGING_SCALE_SECONDS = 7;     // elke 7s wachten => +1 aging
+        private const double AGING_SCALE_SECONDS = 7;
 
-        // Brug-specifiek
-        private const int BRIDGE_GREEN_DURATION = 7000;   // 7s groen voor brug
-        private const int BRIDGE_ORANGE_DURATION = 7000;  // 7s oranje voor brug
-
-        // ======= Nieuw: na 1 brugcyclus forceren we 30s gewone verkeersregeling =====
-        private const int POST_BRIDGE_NORMAL_PHASE_MS = 30000; // 30s “normale cyclus verplicht”
+        // Brug- en cycle
+        private const int BRIDGE_GREEN_DURATION = 7000;
+        private const int BRIDGE_ORANGE_DURATION = 7000;
+        private const int POST_BRIDGE_NORMAL_PHASE_MS = 30000;
+        private const int BRIDGE_COOLDOWN_SECONDS = 20;
 
         // ================================
         //       RUNTIME FIELDS
@@ -44,19 +43,21 @@ namespace stoplicht_controller.Managers
         private Communicator communicator;
         private List<Direction> directions;
 
-        // --- Brug-cycli ---
         private Task bridgeTask;
         private bool isBridgeCycleRunning = false;
         private readonly object bridgeLock = new object();
 
-        // Identificatie van de brugrichtingen
         private readonly int bridgeDirectionA = 71;
         private readonly int bridgeDirectionB = 72;
 
-        // ======= Nieuw: vlag en timer om brug-gebruik slechts 1x per cyclus te doen =====
-        private bool bridgeUsedThisCycle = false;   // Zodra we de brug open hebben gehad, staat dit op true
+        private bool bridgeUsedThisCycle = false;
         private bool postBridgeNormalPhaseActive = false;
         private DateTime postBridgePhaseStartTime;
+        private DateTime lastBridgeClosedTime = DateTime.MinValue;
+
+        // Software vs fysiek
+        private string currentBridgeState = "rood";
+        private string physicalBridgeState = "dicht";
 
         // ================================
         //           CONSTRUCTOR
@@ -65,9 +66,6 @@ namespace stoplicht_controller.Managers
         {
             this.communicator = communicator;
             this.directions = directions;
-
-            // Zet direct bij het aanmaken:
-            // direction 71/72 => rood, hun intersecties => groen
             SetInitialBridgeState();
         }
 
@@ -81,34 +79,21 @@ namespace stoplicht_controller.Managers
 
         private void SetInitialBridgeState()
         {
-            // 1) Stel direction 71 en 72 zelf in op ROOD
             var dir71 = directions.FirstOrDefault(d => d.Id == bridgeDirectionA);
             var dir72 = directions.FirstOrDefault(d => d.Id == bridgeDirectionB);
 
-            if (dir71 != null)
-            {
-                dir71.Color = LightColor.Red;
-                Console.WriteLine($"Richting {dir71.Id} op ROOD (init).");
-            }
-            if (dir72 != null)
-            {
-                dir72.Color = LightColor.Red;
-                Console.WriteLine($"Richting {dir72.Id} op ROOD (init).");
-            }
+            currentBridgeState = "rood";
+            if (dir71 != null) dir71.Color = LightColor.Red;
+            if (dir72 != null) dir72.Color = LightColor.Red;
 
-            // 2) Zet alle “conflicterende”/kruizende richtingen van 71 en 72 op GROEN
-            //    zodat auto’s meteen kunnen doorrijden
             if (dir71 != null)
             {
                 foreach (var conflictId in dir71.Intersections)
                 {
                     var conflictDir = directions.FirstOrDefault(d => d.Id == conflictId);
-                    if (conflictDir != null
-                        && conflictDir.Id != bridgeDirectionA
-                        && conflictDir.Id != bridgeDirectionB)
+                    if (conflictDir != null && conflictDir.Id != bridgeDirectionA && conflictDir.Id != bridgeDirectionB)
                     {
                         conflictDir.Color = LightColor.Green;
-                        Console.WriteLine($"Richting {conflictDir.Id} op GROEN (init, kruist 71).");
                     }
                 }
             }
@@ -117,23 +102,17 @@ namespace stoplicht_controller.Managers
                 foreach (var conflictId in dir72.Intersections)
                 {
                     var conflictDir = directions.FirstOrDefault(d => d.Id == conflictId);
-                    if (conflictDir != null
-                        && conflictDir.Id != bridgeDirectionA
-                        && conflictDir.Id != bridgeDirectionB)
+                    if (conflictDir != null && conflictDir.Id != bridgeDirectionA && conflictDir.Id != bridgeDirectionB)
                     {
                         conflictDir.Color = LightColor.Green;
-                        Console.WriteLine($"Richting {conflictDir.Id} op GROEN (init, kruist 72).");
                     }
                 }
             }
-
-            // Optioneel: stuur meteen de eerste keer de states naar de communicator
             SendTrafficLightStates();
         }
 
-
         // ================================
-        //       MAIN CYCLE LOOP
+        //       MAIN LOOP
         // ================================
         public async Task TrafficLightCycleLoop(CancellationToken token)
         {
@@ -143,39 +122,65 @@ namespace stoplicht_controller.Managers
                 SendTrafficLightStates();
             }
 
-            // Hoofdlus
             while (!token.IsCancellationRequested)
             {
                 ProcessSensorMessage();
-
-                // 1) Als we niet in post-bridge fase zitten, checken we brugverzoeken
+                ProcessBridgeSensorData();
                 if (!postBridgeNormalPhaseActive)
                 {
                     CheckBridgeRequests();
                 }
                 else
                 {
-                    // Als we in de post-bridge fase zitten, check of die nog duurt
                     double elapsed = (DateTime.Now - postBridgePhaseStartTime).TotalMilliseconds;
                     if (elapsed >= POST_BRIDGE_NORMAL_PHASE_MS)
                     {
-                        // Post-bridge-fase is klaar => reset
                         postBridgeNormalPhaseActive = false;
-                        bridgeUsedThisCycle = false;  // Nieuwe ronde kan brug weer openen
-                        Console.WriteLine("Post-bridge normale fase is afgelopen, brug kan in volgende ronde weer openen.");
+                        bridgeUsedThisCycle = false;
+                        Console.WriteLine("Post-bridge fase voorbij, brug kan weer openen volgende ronde.");
                     }
                 }
 
-                // 2) Update de normale stoplichtlogica
                 UpdateTrafficLights();
-
-                // Even wachten
                 await Task.Delay(500, token);
             }
         }
 
         // ================================
-        //       UPDATE-LOGICA
+        //   PROCESS BRIDGE STATE
+        // ================================
+        private void ProcessBridgeSensorData()
+        {
+            if (string.IsNullOrEmpty(communicator.BridgeSensorData)) return;
+
+            try
+            {
+                var bridgeData = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, string>>>(communicator.BridgeSensorData);
+                if (bridgeData != null && bridgeData.ContainsKey("81.1"))
+                {
+                    var inner = bridgeData["81.1"];
+                    if (inner.ContainsKey("state"))
+                    {
+                        string st = inner["state"];
+                        if (st == "open" || st == "dicht")
+                        {
+                            if (physicalBridgeState != st)
+                            {
+                                physicalBridgeState = st;
+                                Console.WriteLine($"Fysieke brugstatus => {physicalBridgeState}");
+                            }
+                        }
+                    }
+                }
+            }
+            catch (JsonReaderException ex)
+            {
+                Console.WriteLine($"Fout bij deserializen BridgeSensorData: {ex.Message}");
+            }
+        }
+
+        // ================================
+        //       UPDATE TRAFFIC LIGHTS
         // ================================
         public void UpdateTrafficLights()
         {
@@ -185,7 +190,6 @@ namespace stoplicht_controller.Managers
             double timeSinceGreen = (now - lastSwitchTime).TotalMilliseconds;
             double timeSinceOrange = (now - lastOrangeTime).TotalMilliseconds;
 
-            // Oranje -> rood
             if (currentOrangeDirections.Any())
             {
                 if (timeSinceOrange >= ORANGE_DURATION)
@@ -197,7 +201,6 @@ namespace stoplicht_controller.Managers
                 return;
             }
 
-            // Groen -> oranje?
             if (currentGreenDirections.Any())
             {
                 int sumEffectivePriority = currentGreenDirections.Sum(d => GetEffectivePriority(d));
@@ -223,7 +226,6 @@ namespace stoplicht_controller.Managers
                             currentGreenDirections.Add(extra);
                             extra.Color = LightColor.Green;
                             lastGreenTimes[extra.Id] = DateTime.Now;
-                            Console.WriteLine($"Extra richting {extra.Id} toegevoegd (priority={GetEffectivePriority(extra)}).");
                         }
                         lastSwitchTime = DateTime.Now;
                         SendTrafficLightStates();
@@ -232,7 +234,6 @@ namespace stoplicht_controller.Managers
                 return;
             }
 
-            // Niets groen
             if (!currentGreenDirections.Any())
             {
                 SwitchTrafficLights();
@@ -240,16 +241,11 @@ namespace stoplicht_controller.Managers
             }
         }
 
-        /// <summary>
-        /// Selecteert extra richtingen die conflictvrij erbij kunnen.
-        /// </summary>
         private List<Direction> GetExtraGreenCandidates()
         {
-            // Bouw de excluded-lijst van de brug en hun intersecties
             var excludedIds = GetBridgeIntersectionSet();
-
             var candidates = directions
-                .Where(d => !excludedIds.Contains(d.Id)) // <-- Brug & intersecties uitsluiten
+                .Where(d => !excludedIds.Contains(d.Id))
                 .Where(d => GetPriority(d) > 0 && !currentGreenDirections.Contains(d))
                 .OrderByDescending(d => GetEffectivePriority(d))
                 .ThenBy(d => d.Id)
@@ -262,31 +258,17 @@ namespace stoplicht_controller.Managers
                     .Concat(extraCandidates)
                     .Any(g => HasConflict(g, candidate));
 
-                if (conflictWithCurrentGreen)
-                    continue;
-
-                // We kunnen hier evt. IsBridgeOpen-check nog hebben, maar
-                // als we ze sws uitsluiten, is dat niet meer nodig
-
+                if (conflictWithCurrentGreen) continue;
                 extraCandidates.Add(candidate);
             }
             return extraCandidates;
         }
 
-
-        /// <summary>
-        /// Bepaalt nieuwe hoofdrichting(en) op groen, op basis van prioriteiten
-        /// </summary>
         private void SwitchTrafficLights()
         {
-            // Stel eerst een verzameling samen van wat we “excluden” uit de normale cyclus:
-            // - De brugrichtingen zelf (71, 72)
-            // - Alles wat intersect met 71 of 72
             var excludedIds = GetBridgeIntersectionSet();
-
-            // Hier filteren we: “alle richtingen behalve brug en hun intersecties”
             var availableDirections = directions
-                .Where(d => !excludedIds.Contains(d.Id))            // exclude brug + intersecties
+                .Where(d => !excludedIds.Contains(d.Id))
                 .Where(d => GetPriority(d) > 0)
                 .OrderByDescending(d => GetEffectivePriority(d))
                 .ThenBy(d => d.Id)
@@ -294,18 +276,15 @@ namespace stoplicht_controller.Managers
 
             if (!availableDirections.Any())
             {
-                Console.WriteLine("Geen beschikbare richtingen gevonden voor groen (brug + intersecties uitgesloten).");
+                Console.WriteLine("Geen beschikbare richtingen voor groen (brug + intersecties).");
                 return;
             }
 
-            // Zelfde logic als anders: bouw de newGreenGroup
             var newGreenGroup = new List<Direction>();
             foreach (var candidate in availableDirections)
             {
-                // ... check conflicts, etc.
                 if (newGreenGroup.Any(g => HasConflict(g, candidate)))
                     continue;
-
                 newGreenGroup.Add(candidate);
             }
 
@@ -317,38 +296,28 @@ namespace stoplicht_controller.Managers
 
             if (newGreenGroup.SequenceEqual(currentGreenDirections))
             {
-                Console.WriteLine("Groen-groep blijft ongewijzigd.");
+                Console.WriteLine("Groen-groep ongewijzigd.");
                 return;
             }
 
-            // Oude greens -> rood
             foreach (var dir in currentGreenDirections)
             {
                 dir.Color = LightColor.Red;
-                Console.WriteLine($"Richting {dir.Id} op rood.");
             }
             currentGreenDirections.Clear();
 
-            // Nieuwe greens
             currentGreenDirections = newGreenGroup;
             foreach (var dir in currentGreenDirections)
             {
                 dir.Color = LightColor.Green;
                 lastGreenTimes[dir.Id] = DateTime.Now;
-                Console.WriteLine($"Richting {dir.Id} nu groen (priority={GetEffectivePriority(dir)}).");
             }
             lastSwitchTime = DateTime.Now;
         }
 
-        /// <summary>
-        /// Bepaal de IDs van de brugrichtingen (71,72) plus al hun intersecties.
-        /// Deze IDs sluiten we uit in de normale cyclus.
-        /// </summary>
         private HashSet<int> GetBridgeIntersectionSet()
         {
             var excluded = new HashSet<int>();
-
-            // Pak direction 71 en 72
             var dir71 = directions.FirstOrDefault(d => d.Id == bridgeDirectionA);
             var dir72 = directions.FirstOrDefault(d => d.Id == bridgeDirectionB);
 
@@ -364,10 +333,8 @@ namespace stoplicht_controller.Managers
                 foreach (var conflictId in dir72.Intersections)
                     excluded.Add(conflictId);
             }
-
             return excluded;
         }
-
 
         private bool HasConflict(Direction d1, Direction d2)
         {
@@ -375,20 +342,11 @@ namespace stoplicht_controller.Managers
             return d1.Intersections.Contains(d2.Id) || d2.Intersections.Contains(d1.Id);
         }
 
-        private bool HasConflictWithBridge(Direction direction)
-        {
-            return direction.Id == bridgeDirectionA
-                   || direction.Id == bridgeDirectionB
-                   || direction.Intersections.Contains(bridgeDirectionA)
-                   || direction.Intersections.Contains(bridgeDirectionB);
-        }
-
         private void SetLightsToOrange()
         {
             foreach (var dir in currentGreenDirections)
             {
                 dir.Color = LightColor.Orange;
-                Console.WriteLine($"Richting {dir.Id} staat op oranje.");
             }
             currentOrangeDirections = new List<Direction>(currentGreenDirections);
             currentGreenDirections.Clear();
@@ -399,7 +357,6 @@ namespace stoplicht_controller.Managers
             foreach (var dir in currentOrangeDirections)
             {
                 dir.Color = LightColor.Red;
-                Console.WriteLine($"Richting {dir.Id} staat op rood.");
             }
             currentOrangeDirections.Clear();
         }
@@ -422,51 +379,44 @@ namespace stoplicht_controller.Managers
             DateTime lastGreen = lastGreenTimes.ContainsKey(direction.Id)
                 ? lastGreenTimes[direction.Id]
                 : DateTime.Now;
-
             int agingBonus = (int)((DateTime.Now - lastGreen).TotalSeconds / AGING_SCALE_SECONDS);
             return basePriority + agingBonus;
         }
 
-        // ================================
-        //       SENSOR MESSAGING
-        // ================================
         private void ProcessSensorMessage()
         {
             if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;
 
-            Dictionary<string, Dictionary<string, bool>> sensorData = null;
             try
             {
-                sensorData = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);
+                var sensorData = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);
+                if (sensorData == null) return;
+
+                foreach (var (trafficLightId, sensors) in sensorData)
+                {
+                    var trafficLight = directions
+                        .SelectMany(d => d.TrafficLights)
+                        .FirstOrDefault(tl => tl.Id == trafficLightId);
+                    if (trafficLight == null) continue;
+
+                    foreach (var sensor in trafficLight.Sensors)
+                    {
+                        if (sensor.Position == SensorPosition.Front && sensors.TryGetValue("voor", out bool frontValue))
+                            sensor.IsActivated = frontValue;
+                        else if (sensor.Position == SensorPosition.Back && sensors.TryGetValue("achter", out bool backValue))
+                            sensor.IsActivated = backValue;
+                    }
+                }
             }
             catch (JsonReaderException ex)
             {
                 Console.WriteLine($"Fout bij deserializen sensor data: {ex.Message}");
-                return;
-            }
-            if (sensorData == null)
-            {
-                Console.WriteLine("Sensor data is null.");
-                return;
-            }
-
-            foreach (var (trafficLightId, sensors) in sensorData)
-            {
-                var trafficLight = directions
-                    .SelectMany(d => d.TrafficLights)
-                    .FirstOrDefault(tl => tl.Id == trafficLightId);
-                if (trafficLight == null) continue;
-
-                foreach (var sensor in trafficLight.Sensors)
-                {
-                    if (sensor.Position == SensorPosition.Front && sensors.TryGetValue("voor", out bool frontValue))
-                        sensor.IsActivated = frontValue;
-                    else if (sensor.Position == SensorPosition.Back && sensors.TryGetValue("achter", out bool backValue))
-                        sensor.IsActivated = backValue;
-                }
             }
         }
 
+        // ================================
+        //     SEND TRAFFIC STATES
+        // ================================
         private void SendTrafficLightStates()
         {
             if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;
@@ -489,21 +439,27 @@ namespace stoplicht_controller.Managers
                 })
                 .ToDictionary(x => x.Id, x => x.State);
 
+            stateDict["81.1"] = currentBridgeState;
+
             communicator.PublishMessage("stoplichten", stateDict);
         }
 
         // ================================
-        //      BRUG-SPECIFIEKE LOGIC
+        //      BRUG-LOGIC
         // ================================
         private void CheckBridgeRequests()
         {
-            // 1) Als de brug deze cyclus al één keer geopend is, niet nog eens
-            if (bridgeUsedThisCycle) return;
+            // Cooldown-check
+            var timeSinceClosed = (DateTime.Now - lastBridgeClosedTime).TotalSeconds;
+            if (timeSinceClosed < BRIDGE_COOLDOWN_SECONDS)
+            {
+                // In cooldown
+                return;
+            }
 
-            // 2) Als de brug al in de open-cyclus zit, ook niets doen
+            if (bridgeUsedThisCycle) return;
             if (isBridgeCycleRunning) return;
 
-            // 3) Check prioriteit
             var dir71 = directions.FirstOrDefault(d => d.Id == bridgeDirectionA);
             var dir72 = directions.FirstOrDefault(d => d.Id == bridgeDirectionB);
             if (dir71 == null || dir72 == null) return;
@@ -511,7 +467,7 @@ namespace stoplicht_controller.Managers
             int priority71 = GetPriority(dir71);
             int priority72 = GetPriority(dir72);
 
-            // 4) Als (71 of 72) > 0, start de brugcyclus
+            // We check if either side > 0
             if (priority71 > 0 || priority72 > 0)
             {
                 lock (bridgeLock)
@@ -519,49 +475,26 @@ namespace stoplicht_controller.Managers
                     if (!isBridgeCycleRunning)
                     {
                         isBridgeCycleRunning = true;
-
                         bridgeTask = Task.Run(async () =>
                         {
                             try
                             {
-                                Console.WriteLine("=== Start ÉÉNMALIGE brugcyclus (beide kanten indien nodig) ===");
+                                Console.WriteLine("=== Start Single Bridge Session ===");
+                                // Bepaal beide prioriteiten
+                                //  - If both > 0 => we handle them one after the other (without closing in between!)
+                                //  - If only one > 0 => just handle that side.
 
-                                // --- 1) Bepaal wie er eerst gaat ---
-                                int directionId = (priority71 >= priority72)
-                                    ? bridgeDirectionA
-                                    : bridgeDirectionB;
-
-                                // --- 2) Open brug voor de "eerste" kant ---
-                                await HandleSingleBridgeSide(directionId);
-
-                                // --- 3) Kijk of de "andere kant" óók nog boot-prioriteit heeft ---
-                                // (herbereken voor de zekerheid, sensoren kunnen veranderd zijn)
-                                priority71 = GetPriority(dir71);
-                                priority72 = GetPriority(dir72);
-
-                                if (directionId == bridgeDirectionA && priority72 > 0)
-                                {
-                                    Console.WriteLine("Andere kant (72) heeft óók prioriteit; open brug nu voor 72");
-                                    await HandleSingleBridgeSide(bridgeDirectionB);
-                                }
-                                else if (directionId == bridgeDirectionB && priority71 > 0)
-                                {
-                                    Console.WriteLine("Andere kant (71) heeft óók prioriteit; open brug nu voor 71");
-                                    await HandleSingleBridgeSide(bridgeDirectionA);
-                                }
-
-                                // Hierna is de brug echt klaar (beide kanten gedaan)
+                                // We chain them in 1 session
+                                await HandleBridgeSession();
                             }
                             finally
                             {
-                                // 4) Sluit de cycle definitief af
                                 isBridgeCycleRunning = false;
                                 bridgeUsedThisCycle = true;
-
-                                // 5) Start direct de "normale" fase van X seconden
                                 postBridgeNormalPhaseActive = true;
                                 postBridgePhaseStartTime = DateTime.Now;
-                                Console.WriteLine("Brugcyclus voltooid (beide kanten). X seconden lang normale cyclus afdraaien.");
+                                lastBridgeClosedTime = DateTime.Now;
+                                Console.WriteLine("Brugcyclus geheel klaar; cooldown started.");
                             }
                         });
                     }
@@ -569,96 +502,181 @@ namespace stoplicht_controller.Managers
             }
         }
 
-        private bool IsBridgeOpen()
+        /// <summary>
+        /// HandleBridgeSession() opent de brug 1x en laat alle benodigde kanten (71 en/of 72)
+        /// varen voordat de brug weer fysiek dichtgaat.
+        /// </summary>
+        private async Task HandleBridgeSession()
         {
-            return isBridgeCycleRunning;
+            // 1) Bepaal of 71 prioriteit heeft en of 72 prioriteit heeft
+            var dir71 = directions.FirstOrDefault(d => d.Id == bridgeDirectionA);
+            var dir72 = directions.FirstOrDefault(d => d.Id == bridgeDirectionB);
+            if (dir71 == null || dir72 == null) return;
+
+            int p71 = GetPriority(dir71);
+            int p72 = GetPriority(dir72);
+
+            bool sideAHasPriority = (p71 > 0);
+            bool sideBHasPriority = (p72 > 0);
+
+            // 2) Als geen van beide >0, meteen return
+            if (!sideAHasPriority && !sideBHasPriority)
+            {
+                Console.WriteLine("Geen boot, geen brug nodig.");
+                return;
+            }
+
+            // 3) Forceer autoverkeer dat kruist => rood
+            ForceConflictDirectionsToRed(bridgeDirectionA);
+            ForceConflictDirectionsToRed(bridgeDirectionB);
+
+            // 4) Wacht tot brug fysiek "open"
+            Console.WriteLine("... Wachten tot brug fysiek OPEN is ...");
+            currentBridgeState = "groen";
+            while (physicalBridgeState != "open")
+            {
+                await Task.Delay(500);
+                ProcessBridgeSensorData();
+            }
+            // Brug is fysiek open
+            Console.WriteLine("Fysieke brug is nu OPEN => we gaan varen.");
+
+            // 5) Als 71 prioriteit had => 7s groen + 7s oranje
+            if (sideAHasPriority)
+            {
+                await LetBoatsPass(bridgeDirectionA, "71");
+            }
+
+            // 6) Check nogmaals of 72 intussen prioriteit heeft
+            //    (of had die al => sideBHasPriority)
+            p72 = GetPriority(dir72);
+            sideBHasPriority = (p72 > 0) || sideBHasPriority;
+            if (sideBHasPriority)
+            {
+                await LetBoatsPass(bridgeDirectionB, "72");
+            }
+
+            // 7) Nu zijn beide kanten klaar => brug software op "rood",
+            //    Wachten tot fysiek "dicht"
+            currentBridgeState = "rood";
+            SendTrafficLightStates();
+            Console.WriteLine("Nu brug fysiek sluiten (wachten op 'dicht'..)");
+            while (physicalBridgeState != "dicht")
+            {
+                await Task.Delay(500);
+                ProcessBridgeSensorData();
+            }
+
+            // 8) Kruizende wegen => oranje => rood => etc.
+            // MakeCrossingOranjeBeforeGreen();
+            MakeCrossingGreen();
+            Console.WriteLine("Beide kanten gevaren en brug fysiek dicht => autoverkeer weer groen.");
         }
 
-        private async Task HandleSingleBridgeSide(int directionId)
+        /// <summary>
+        /// Laat 1 kant (dirId) 7s groen + 7s oranje varen zonder de brug tussentijds fysiek dicht te doen.
+        /// </summary>
+        private async Task LetBoatsPass(int dirId, string sideLabel)
         {
-            Console.WriteLine($"Brugcyclus voor richting {directionId} start...");
+            Console.WriteLine($"... Boten laten passeren op kant {sideLabel} ...");
+            var direction = directions.First(d => d.Id == dirId);
+            if (direction == null) return;
 
-            ForceConflictDirectionsToRed(directionId);
-
-            // 1) Brug open => 7s groen
-            var dir = directions.First(d => d.Id == directionId);
-            dir.Color = LightColor.Green;
-            Console.WriteLine($"Richting {directionId} staat nu GROEN (brug open).");
+            // 7s groen
+            direction.Color = LightColor.Green;
+            Console.WriteLine($"Richting {dirId} staat nu GROEN.");
             SendTrafficLightStates();
             await Task.Delay(BRIDGE_GREEN_DURATION);
 
-            // 2) 7s oranje
-            dir.Color = LightColor.Orange;
-            Console.WriteLine($"Richting {directionId} staat nu ORANJE.");
+            // 7s oranje
+            direction.Color = LightColor.Orange;
+            Console.WriteLine($"Richting {dirId} staat nu ORANJE.");
             SendTrafficLightStates();
             await Task.Delay(BRIDGE_ORANGE_DURATION);
 
-            // 3) Brug dicht => zet BEIDE brugrichtingen op rood
-            dir.Color = LightColor.Red;
-            Console.WriteLine($"Richting {directionId} staat op ROOD (brug dicht).");
+            // Zet dan op rood
+            direction.Color = LightColor.Red;
+            Console.WriteLine($"Richting {dirId} staat nu ROOD (varen klaar).");
+            SendTrafficLightStates();
+        }
 
-            // Zet ook de andere brugrichting (71 of 72) op rood
-            var otherBridgeId = (directionId == bridgeDirectionA) ? bridgeDirectionB : bridgeDirectionA;
-            var otherBridge = directions.FirstOrDefault(d => d.Id == otherBridgeId);
-            if (otherBridge != null)
+        // ==> De user wilde: "als we de brug dicht hebben, dan oranje => rood => ...
+        //    NU: We doen oranje voordat we final op groen zetten
+        private void MakeCrossingOranjeBeforeGreen()
+        {
+            var crossing = GetAllCrossingDirections();
+            // Zet oranje
+            foreach (var cdir in crossing)
             {
-                otherBridge.Color = LightColor.Red;
-                Console.WriteLine($"Richting {otherBridge.Id} staat óók op ROOD (brug dicht).");
+                cdir.Color = LightColor.Orange;
+                Console.WriteLine($"Kruizend verkeer {cdir.Id} => ORANJE.");
             }
+            Thread.Sleep(ORANGE_DURATION);
 
-            // 4) Zet alle kruizende wegen van 71 én 72 op groen
+            // Zet rood
+            foreach (var cdir in crossing)
+            {
+                cdir.Color = LightColor.Red;
+                Console.WriteLine($"Kruizend verkeer {cdir.Id} => ROOD.");
+            }
+        }
+
+        private void MakeCrossingGreen()
+        {
+            var crossing = GetAllCrossingDirections();
+            foreach (var cdir in crossing)
+            {
+                cdir.Color = LightColor.Green;
+                Console.WriteLine($"Kruizend verkeer {cdir.Id} => GROEN.");
+            }
+            SendTrafficLightStates();
+        }
+
+        /// <summary>
+        /// Kruizende directions van 71 en 72 (excl. 71/72 zelf)
+        /// </summary>
+        private List<Direction> GetAllCrossingDirections()
+        {
+            var list = new List<Direction>();
             var dir71 = directions.FirstOrDefault(d => d.Id == bridgeDirectionA);
             var dir72 = directions.FirstOrDefault(d => d.Id == bridgeDirectionB);
 
             if (dir71 != null)
             {
-                foreach (var conflictId in dir71.Intersections)
+                foreach (var c in dir71.Intersections)
                 {
-                    var conflictDir = directions.FirstOrDefault(dx => dx.Id == conflictId);
-                    if (conflictDir != null
-                        && conflictDir.Id != bridgeDirectionA  // skip 71 zelf
-                        && conflictDir.Id != bridgeDirectionB) // skip 72
+                    var cdir = directions.FirstOrDefault(d => d.Id == c);
+                    if (cdir != null && cdir.Id != bridgeDirectionA && cdir.Id != bridgeDirectionB)
                     {
-                        conflictDir.Color = LightColor.Green;
-                        Console.WriteLine($"Richting {conflictDir.Id} staat op GROEN (auto's, kruist brug {dir71.Id}).");
+                        list.Add(cdir);
                     }
                 }
             }
-
             if (dir72 != null)
             {
-                foreach (var conflictId in dir72.Intersections)
+                foreach (var c in dir72.Intersections)
                 {
-                    var conflictDir = directions.FirstOrDefault(dx => dx.Id == conflictId);
-                    if (conflictDir != null
-                        && conflictDir.Id != bridgeDirectionA
-                        && conflictDir.Id != bridgeDirectionB)
+                    var cdir = directions.FirstOrDefault(d => d.Id == c);
+                    if (cdir != null && cdir.Id != bridgeDirectionA && cdir.Id != bridgeDirectionB)
                     {
-                        conflictDir.Color = LightColor.Green;
-                        Console.WriteLine($"Richting {conflictDir.Id} staat op GROEN (auto's, kruist brug {dir72.Id}).");
+                        list.Add(cdir);
                     }
                 }
             }
-
-            SendTrafficLightStates();
-
-            Console.WriteLine($"Brugcyclus voor richting {directionId} klaar.");
+            return list.Distinct().ToList();
         }
 
         private void ForceConflictDirectionsToRed(int bridgeDir)
         {
-            // Zorg dat alles wat intersect met de brugrichting rood staat
             foreach (var d in directions)
             {
                 if (d.Id == bridgeDir) continue;
                 if (d.Intersections.Contains(bridgeDir))
                 {
                     d.Color = LightColor.Red;
-                    Console.WriteLine($"Richting {d.Id} forced RED (conflict met brug {bridgeDir}).");
+                    Console.WriteLine($"Richting {d.Id} forced RED (brug {bridgeDir}).");
                 }
             }
-
-            // Haal ze ook uit de currentGreen/currentOrange-lijsten
             currentGreenDirections.RemoveAll(d => d.Intersections.Contains(bridgeDir));
             currentOrangeDirections.RemoveAll(d => d.Intersections.Contains(bridgeDir));
         }

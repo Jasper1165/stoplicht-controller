@@ -18,6 +18,7 @@ namespace stoplicht_controller.Classes
         public string? LaneSensorData { get; set; }
         public string? SpecialSensorData { get; set; }
         public string? PriorityVehicleData { get; set; }
+        public string? BridgeSensorData { get; set; }
         private readonly object _dataLock = new object();
 
         public Communicator(string subscribeAddress, string publisherAddress, string[] subscribeTopics)
@@ -86,6 +87,9 @@ namespace stoplicht_controller.Classes
                         break;
                     case "voorrangsvoertuig":
                         PriorityVehicleData = message;
+                        break;
+                    case "sensoren_bruggen":
+                        BridgeSensorData = message;
                         break;
                     case "tijd":
                         // Verwerk tijd bericht indien nodig
