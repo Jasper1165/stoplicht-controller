@@ -23,7 +23,7 @@ namespace stoplicht_controller.Managers
 
         // Brug- en cycle
         private const int BRIDGE_GREEN_DURATION = 7000;
-        private const int BRIDGE_ORANGE_DURATION = 7000;
+        private const int BRIDGE_ORANGE_DURATION = 9000;
         private const int POST_BRIDGE_NORMAL_PHASE_MS = 30000;
         private const int BRIDGE_COOLDOWN_SECONDS = 20;
 
@@ -527,8 +527,8 @@ namespace stoplicht_controller.Managers
             }
 
             // 3) Forceer autoverkeer dat kruist => rood
-            ForceConflictDirectionsToRed(bridgeDirectionA);
-            ForceConflictDirectionsToRed(bridgeDirectionB);
+            await ForceConflictDirectionsToRed(bridgeDirectionA);
+            await ForceConflictDirectionsToRed(bridgeDirectionB);
 
             // 4) Wacht tot brug fysiek "open"
             Console.WriteLine("... Wachten tot brug fysiek OPEN is ...");
@@ -666,19 +666,39 @@ namespace stoplicht_controller.Managers
             return list.Distinct().ToList();
         }
 
-        private void ForceConflictDirectionsToRed(int bridgeDir)
+        private async Task ForceConflictDirectionsToRed(int bridgeDir)
         {
-            foreach (var d in directions)
+            // Verzamel alle conflicterende richtingen
+            var conflictDirections = directions
+                .Where(d => d.Id != bridgeDir && d.Intersections.Contains(bridgeDir))
+                .ToList();
+
+            // 1) Bepaal welke ervan nu groen zijn -> eerst oranje
+            foreach (var dir in conflictDirections)
             {
-                if (d.Id == bridgeDir) continue;
-                if (d.Intersections.Contains(bridgeDir))
+                if (dir.Color == LightColor.Green)
                 {
-                    d.Color = LightColor.Red;
-                    Console.WriteLine($"Richting {d.Id} forced RED (brug {bridgeDir}).");
+                    dir.Color = LightColor.Orange;
+                    Console.WriteLine($"Richting {dir.Id} => ORANJE (brug {bridgeDir}).");
                 }
             }
-            currentGreenDirections.RemoveAll(d => d.Intersections.Contains(bridgeDir));
-            currentOrangeDirections.RemoveAll(d => d.Intersections.Contains(bridgeDir));
+            // Even wachten op de oranje-duur, alleen als er minstens 1 groene was
+            // (of je altijd wilt wachten, kan je kiezen)
+            if (conflictDirections.Any(d => d.Color == LightColor.Orange))
+            {
+                await Task.Delay(ORANGE_DURATION);
+            }
+
+            // 2) Zet ze nu op rood
+            foreach (var dir in conflictDirections)
+            {
+                dir.Color = LightColor.Red;
+                Console.WriteLine($"Richting {dir.Id} => ROOD (brug {bridgeDir}).");
+            }
+
+            // 3) Haal ze ook uit currentGreenDirections/currentOrangeDirections
+            currentGreenDirections.RemoveAll(d => conflictDirections.Contains(d));
+            currentOrangeDirections.RemoveAll(d => conflictDirections.Contains(d));
         }
     }
 }
