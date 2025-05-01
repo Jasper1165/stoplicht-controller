@@ -15,14 +15,14 @@ namespace stoplicht_controller.Managers
         //       CONFIG CONSTANTS
         // ================================
         private const int ORANGE_DURATION = 2000;
-        private const int DEFAULT_GREEN_DURATION = 8000;
+        private const int DEFAULT_GREEN_DURATION = 6000;
         private const int SHORT_GREEN_DURATION = 3000;
         private const int PRIORITY_THRESHOLD = 3;
         private const int HIGH_PRIORITY_THRESHOLD = 6;
         private const double AGING_SCALE_SECONDS = 7;
 
         // Brug- en cycle
-        private const int BRIDGE_GREEN_DURATION = 7000;
+        private const int BRIDGE_GREEN_DURATION = 9000;
         private const int BRIDGE_ORANGE_DURATION = 9000;
         private const int POST_BRIDGE_NORMAL_PHASE_MS = 30000;
         private const int BRIDGE_COOLDOWN_SECONDS = 20;
@@ -592,7 +592,7 @@ namespace stoplicht_controller.Managers
             direction.Color = LightColor.Orange;
             Console.WriteLine($"Richting {dirId} staat nu ORANJE.");
             SendTrafficLightStates();
-            await Task.Delay(BRIDGE_ORANGE_DURATION);
+            await Task.Delay(BRIDGE_ORANGE_DURATION + 1000);
 
             // Zet dan op rood
             direction.Color = LightColor.Red;
