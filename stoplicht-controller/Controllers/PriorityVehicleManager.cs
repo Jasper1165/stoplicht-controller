@@ -11,9 +11,9 @@ namespace stoplicht_controller.Managers
 {
     public class PriorityVehicleManager
     {
-        private Communicator communicator;
-        private List<Direction> directions;
-        private List<Direction> priorityVehicleQueue;
+        private readonly Communicator communicator;
+        private readonly List<Direction> directions;
+        private readonly List<Direction> priorityVehicleQueue;
 
         public PriorityVehicleManager(Communicator communicator, List<Direction> directions, List<Direction> priorityVehicleQueue)
         {
@@ -48,6 +48,10 @@ namespace stoplicht_controller.Managers
                 Console.WriteLine($"Fout bij het deserialiseren van voorrangsvoertuig data: {ex.Message}");
                 return;
             }
+
+            // ACK: leegmaken zodat we dit bericht niet opnieuw inlezen
+            communicator.PriorityVehicleData = null;
+
             if (priorityVehicleData == null || !priorityVehicleData.ContainsKey("queue"))
                 return;
 
@@ -60,7 +64,10 @@ namespace stoplicht_controller.Managers
                 if (!int.TryParse(priorityObj.ToString(), out int priority))
                     continue;
 
-                int directionId = int.Parse(baan.Split('.')[0]);
+                // Haal directionId uit "2.1" → 2
+                if (!int.TryParse(baan.Split('.')[0], out int directionId))
+                    continue;
+
                 if (!priorityVehicleQueue.Any(d => d.Id == directionId))
                     priorityVehicleQueue.Add(new Direction { Id = directionId, Priority = priority });
             }
@@ -71,28 +78,32 @@ namespace stoplicht_controller.Managers
             if (!priorityVehicleQueue.Any())
                 return;
 
-            var nextVehicle = priorityVehicleQueue.OrderBy(x => x.Priority).ThenBy(x => x.Id).First();
+            var nextVehicle = priorityVehicleQueue
+                .OrderBy(x => x.Priority)
+                .ThenBy(x => x.Id)
+                .First();
+
             int prio = nextVehicle.Priority ?? 0;
             int directionId = nextVehicle.Id;
             var prioDirection = directions.FirstOrDefault(d => d.Id == directionId);
+
             if (prioDirection == null)
             {
                 priorityVehicleQueue.Remove(nextVehicle);
                 return;
             }
 
-            // We signalen dat we de normale cyclus tijdelijk pauzeren
-            // Voor eenvoud gebruiken we hier een directe aanpak (kan ook met events)
+            Console.WriteLine($"Handling priority {prio} vehicle in direction {directionId}");
+
             if (prio == 1)
             {
-                Console.WriteLine($"Handling priority 1 vehicle in direction {directionId}");
+                // Ruime pauze en exclusieve groenfase
                 foreach (var direction in directions.Where(d => d.Id != prioDirection.Id && HasConflict(prioDirection, d)))
                 {
                     direction.Color = LightColor.Red;
                     Console.WriteLine($"Richting {direction.Id} (conflict met {directionId}) gezet op rood.");
                 }
                 prioDirection.Color = LightColor.Green;
-                // Bij prioriteit 1 werken we met een exclusieve afhandeling:
                 Thread.Sleep(3000);
                 prioDirection.Color = LightColor.Red;
                 Console.WriteLine($"Priority 1 voertuig in richting {directionId} afgehandeld.");
@@ -100,22 +111,23 @@ namespace stoplicht_controller.Managers
             }
             else if (prio == 2)
             {
-                Console.WriteLine($"Handling priority 2 vehicle in direction {directionId}");
-                // Als richting nog niet groen is en er geen conflict is, voeg toe aan de groep.
-                if (!prioDirection.Color.Equals(LightColor.Green) && !directions.Any(green => green.Color.Equals(LightColor.Green) && HasConflict(green, prioDirection)))
+                // Toevoegen aan bestaande groene groep indien mogelijk
+                if (prioDirection.Color != LightColor.Green &&
+                    !directions.Any(g => g.Color == LightColor.Green && HasConflict(g, prioDirection)))
                 {
                     prioDirection.Color = LightColor.Green;
                     Console.WriteLine($"Priority 2: Richting {directionId} wordt groen.");
+                    Thread.Sleep(3000);
+                    prioDirection.Color = LightColor.Red;
+                    priorityVehicleQueue.Remove(nextVehicle);
                 }
                 else
                 {
                     Console.WriteLine($"Priority 2: Richting {directionId} conflicteert, blijft in de wachtrij.");
-                    return;
                 }
-                Thread.Sleep(3000);
-                prioDirection.Color = LightColor.Red;
-                priorityVehicleQueue.Remove(nextVehicle);
             }
+
+            // Clear communicator zodat we niet blijven hangen
             communicator.PriorityVehicleData = null;
         }
 

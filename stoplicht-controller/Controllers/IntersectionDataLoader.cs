@@ -99,11 +99,6 @@ namespace stoplicht_controller.Managers
                 directions.Add(direction);
             }
 
-            // Initializeer de brug-data (mogelijk aan te vullen als nodig)
-            Program.Bridge.VehicleOnBridge = false;
-            Program.Bridge.VesselUnderBridge = false;
-            Program.Bridge.TrafficJamNearBridge = false;
-
             Console.WriteLine("Intersection data geladen..");
         }
     }

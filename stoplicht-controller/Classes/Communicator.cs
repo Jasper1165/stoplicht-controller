@@ -87,6 +87,7 @@ namespace stoplicht_controller.Classes
                         break;
                     case "voorrangsvoertuig":
                         PriorityVehicleData = message;
+                        Console.WriteLine(PriorityVehicleData);
                         break;
                     case "sensoren_bruggen":
                         BridgeSensorData = message;
