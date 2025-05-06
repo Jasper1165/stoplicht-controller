@@ -1,3 +1,4 @@
+// TrafficLightController.cs
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,12 +15,10 @@ namespace stoplicht_controller.Managers
         // ================================
         //       CONFIG CONSTANTS
         // ================================
-        private const int ORANGE_DURATION = 3000;
-        private const int DEFAULT_GREEN_DURATION = 6000;
-        private const int SHORT_GREEN_DURATION = 3000;
-        private const int PRIORITY_THRESHOLD = 3;
-        private const int HIGH_PRIORITY_THRESHOLD = 6;
-        private const double AGING_SCALE_SECONDS = 7;
+        private const int ORANGE_DURATION = 4000;                    // how long orange shows (ms)
+        private const int DEFAULT_GREEN_DURATION = 6000;            // default green phase duration (ms)
+        private const int HIGH_PRIORITY_THRESHOLD = 6;               // when to add extra green time
+        private const double AGING_SCALE_SECONDS = 7;                // seconds per “aging” point
 
         // ================================
         //       RUNTIME FIELDS
@@ -30,25 +29,45 @@ namespace stoplicht_controller.Managers
         private List<Direction> currentGreenDirections = new List<Direction>();
         private List<Direction> currentOrangeDirections = new List<Direction>();
         private static Dictionary<int, DateTime> lastGreenTimes = new Dictionary<int, DateTime>();
+
         private readonly Communicator communicator;
         private readonly List<Direction> directions;
         private readonly BridgeController bridgeController;
+        private readonly PriorityVehicleManager priorityManager;
 
-        public TrafficLightController(Communicator communicator, List<Direction> directions, Bridge bridge)
+        public TrafficLightController(
+            Communicator communicator,
+            List<Direction> directions,
+            Bridge bridge,
+            List<Direction> normalQueue,
+            CancellationToken token)
         {
             this.communicator = communicator;
             this.directions = directions;
             InitializeLastGreenTimes(directions);
+
             bridgeController = new BridgeController(communicator, directions, bridge);
+            priorityManager = new PriorityVehicleManager(communicator, directions, normalQueue);
+
+            // Start de priority-handler in een aparte taak
+            Task.Run(() => priorityManager.PriorityVehicleHandlerLoop(token), token);
         }
 
+        /// <summary>
+        /// Initializeert de laatste-groen tijden zodat aging vanaf nu telt.
+        /// </summary>
         public static void InitializeLastGreenTimes(List<Direction> dirs)
         {
-            foreach (var d in dirs) lastGreenTimes[d.Id] = DateTime.Now;
+            foreach (var d in dirs)
+                lastGreenTimes[d.Id] = DateTime.Now;
         }
 
+        /// <summary>
+        /// Main loop: initial switch, dan elke 500ms sensors en update.
+        /// </summary>
         public async Task TrafficLightCycleLoop(CancellationToken token)
         {
+            // Eerste keer meteen schakelen
             if (directions.Any())
             {
                 SwitchTrafficLights();
@@ -65,15 +84,23 @@ namespace stoplicht_controller.Managers
             }
         }
 
+        /// <summary>
+        /// Schakelt alleen als er geen Prio-1 actief is.
+        /// </summary>
         public void UpdateTrafficLights()
         {
-            DateTime now = DateTime.Now;
-            double sinceG = (now - lastSwitchTime).TotalMilliseconds;
-            double sinceO = (now - lastOrangeTime).TotalMilliseconds;
+            // ❌ Vroege exit bij actieve Prio-1
+            if (priorityManager.HasActivePrio1)
+                return;
 
+            var now = DateTime.Now;
+            var sinceGreen = (now - lastSwitchTime).TotalMilliseconds;
+            var sinceOrange = (now - lastOrangeTime).TotalMilliseconds;
+
+            // 1) Oranje-fase
             if (currentOrangeDirections.Any())
             {
-                if (sinceO >= ORANGE_DURATION)
+                if (sinceOrange >= ORANGE_DURATION)
                 {
                     SetLightsToRed();
                     SwitchTrafficLights();
@@ -82,16 +109,15 @@ namespace stoplicht_controller.Managers
                 return;
             }
 
+            // 2) Groene fase
             if (currentGreenDirections.Any())
             {
-                int sumP = currentGreenDirections.Sum(GetEffectivePriority);
-                int dur = sumP >= HIGH_PRIORITY_THRESHOLD
-                    ? DEFAULT_GREEN_DURATION + 2000
-                    : sumP < PRIORITY_THRESHOLD
-                        ? SHORT_GREEN_DURATION
-                        : DEFAULT_GREEN_DURATION;
+                int sumPriority = currentGreenDirections.Sum(GetEffectivePriority);
+                int greenDuration = DEFAULT_GREEN_DURATION;
+                if (sumPriority >= HIGH_PRIORITY_THRESHOLD)
+                    greenDuration += 2000;
 
-                if (sinceG >= dur)
+                if (sinceGreen >= greenDuration)
                 {
                     SetLightsToOrange();
                     lastOrangeTime = DateTime.Now;
@@ -99,6 +125,7 @@ namespace stoplicht_controller.Managers
                 }
                 else
                 {
+                    // Mid‐cycle extra toevoegen
                     var extra = GetExtraGreenCandidates();
                     if (extra.Any())
                     {
@@ -115,40 +142,54 @@ namespace stoplicht_controller.Managers
                 return;
             }
 
+            // 3) Nieuwe groene fase
             SwitchTrafficLights();
             SendTrafficLightStates();
         }
 
+        /// <summary>
+        /// Zoek richtingen die mid‐cycle kunnen bij, zonder conflict met groen of brug.
+        /// </summary>
         private List<Direction> GetExtraGreenCandidates()
         {
             var blocked = bridgeController.GetBridgeIntersectionSet();
-
             return directions
-                .Where(d => GetPriority(d) > 0 && !currentGreenDirections.Contains(d) && !blocked.Contains(d.Id))
+                .Where(d => GetPriority(d) > 0
+                            && !currentGreenDirections.Contains(d)
+                            && !blocked.Contains(d.Id))
                 .OrderByDescending(GetEffectivePriority)
                 .ThenBy(d => d.Id)
                 .Where(d => !currentGreenDirections.Any(g => HasConflict(g, d)))
                 .ToList();
         }
 
+        /// <summary>
+        /// Kies een nieuwe set GREEN, excl. brug en conflicten.
+        /// </summary>
         private void SwitchTrafficLights()
         {
             var blocked = bridgeController.GetBridgeIntersectionSet();
-
-            var avail = directions
+            var candidates = directions
                 .Where(d => GetPriority(d) > 0 && !blocked.Contains(d.Id))
                 .OrderByDescending(GetEffectivePriority)
                 .ThenBy(d => d.Id)
                 .ToList();
 
-            if (!avail.Any()) return;
+            if (!candidates.Any()) return;
 
+            // kies conflictvrije combinaties
             var pick = new List<Direction>();
-            foreach (var d in avail)
+            foreach (var d in candidates)
+            {
                 if (!pick.Any(x => HasConflict(x, d)))
                     pick.Add(d);
+            }
 
-            foreach (var d in currentGreenDirections) d.Color = LightColor.Red;
+            // oude groen → rood
+            foreach (var d in currentGreenDirections)
+                d.Color = LightColor.Red;
+
+            // nieuwe groen
             currentGreenDirections = pick;
             foreach (var d in pick)
             {
@@ -160,52 +201,70 @@ namespace stoplicht_controller.Managers
 
         private void SetLightsToOrange()
         {
-            foreach (var d in currentGreenDirections) d.Color = LightColor.Orange;
-            currentOrangeDirections = new List<Direction>(currentGreenDirections);
+            foreach (var d in currentGreenDirections)
+                d.Color = LightColor.Orange;
+            currentOrangeDirections = currentGreenDirections.ToList();
             currentGreenDirections.Clear();
         }
 
         private void SetLightsToRed()
         {
-            foreach (var d in currentOrangeDirections) d.Color = LightColor.Red;
+            foreach (var d in currentOrangeDirections)
+                d.Color = LightColor.Red;
             currentOrangeDirections.Clear();
         }
 
+        /// <summary>
+        /// True als twee richtingen elkaar kruisen.
+        /// </summary>
         private bool HasConflict(Direction a, Direction b)
             => a.Intersections.Contains(b.Id) || b.Intersections.Contains(a.Id);
 
+        /// <summary>
+        /// Basisprioriteit uit sensoren (1 of 5 punten per TL).
+        /// </summary>
         private int GetPriority(Direction d)
         {
             int p = 0;
             foreach (var tl in d.TrafficLights)
             {
-                bool f = tl.Sensors.Any(s => s.Position == SensorPosition.Front && s.IsActivated);
-                bool b = tl.Sensors.Any(s => s.Position == SensorPosition.Back && s.IsActivated);
-                p += (f && b) ? 5 : (f || b ? 1 : 0);
+                bool front = tl.Sensors.Any(s => s.Position == SensorPosition.Front && s.IsActivated);
+                bool back = tl.Sensors.Any(s => s.Position == SensorPosition.Back && s.IsActivated);
+                p += (front && back) ? 5 : (front || back ? 1 : 0);
             }
             return p;
         }
 
+        /// <summary>
+        /// Aging bonus: richtingen krijgen extra naarmate ze wachten.
+        /// </summary>
         private int GetEffectivePriority(Direction d)
         {
             int baseP = GetPriority(d);
-            DateTime last = lastGreenTimes.TryGetValue(d.Id, out var t) ? t : DateTime.Now;
-            int aging = (int)((DateTime.Now - last).TotalSeconds / AGING_SCALE_SECONDS);
-            return baseP + aging;
+            var last = lastGreenTimes.TryGetValue(d.Id, out var t) ? t : DateTime.Now;
+            int agingBonus = (int)((DateTime.Now - last).TotalSeconds / AGING_SCALE_SECONDS);
+            return baseP + agingBonus;
         }
 
+        /// <summary>
+        /// Lees sensor-JSON en update elke TrafficLight.Sensors.
+        /// </summary>
         private void ProcessSensorMessage()
         {
-            if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;
+            var raw = communicator.LaneSensorData;
+            if (string.IsNullOrEmpty(raw)) return;
 
             try
             {
-                var data = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);
-                if (data == null) return;
-                foreach (var kv in data)
+                var map = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(raw);
+                if (map == null) return;
+
+                foreach (var kv in map)
                 {
-                    var tl = directions.SelectMany(d => d.TrafficLights).FirstOrDefault(t => t.Id == kv.Key);
+                    var tl = directions.SelectMany(d => d.TrafficLights)
+                                       .FirstOrDefault(t => t.Id == kv.Key);
                     if (tl == null) continue;
+
                     foreach (var s in tl.Sensors)
                     {
                         if (s.Position == SensorPosition.Front && kv.Value.TryGetValue("voor", out bool fv))
@@ -215,28 +274,40 @@ namespace stoplicht_controller.Managers
                     }
                 }
             }
-            catch { /* swallow */ }
+            catch
+            {
+                // negeer parse-fouten
+            }
         }
 
+        /// <summary>
+        /// Publiceer huidige kleur per TL en brug.
+        /// </summary>
         private void SendTrafficLightStates()
         {
-            if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;
-            var data = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);
-            if (data == null) return;
+            var raw = communicator.LaneSensorData;
+            if (string.IsNullOrEmpty(raw)) return;
 
-            var dict = data.Keys.ToDictionary(
+            var map = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(raw);
+            if (map == null) return;
+
+            var output = map.Keys.ToDictionary(
                 id => id,
                 id =>
                 {
                     var tl = directions.SelectMany(d => d.TrafficLights).First(t => t.Id == id);
                     var dir = directions.First(d => d.TrafficLights.Contains(tl));
-                    return dir.Color == LightColor.Green ? "groen"
-                         : dir.Color == LightColor.Orange ? "oranje"
-                         : "rood";
+                    return dir.Color switch
+                    {
+                        LightColor.Green => "groen",
+                        LightColor.Orange => "oranje",
+                        _ => "rood"
+                    };
                 });
 
-            dict["81.1"] = bridgeController.CurrentBridgeState;
-            communicator.PublishMessage("stoplichten", dict);
+            // ook brugstatus
+            output["81.1"] = bridgeController.CurrentBridgeState;
+            communicator.PublishMessage("stoplichten", output);
         }
     }
 }

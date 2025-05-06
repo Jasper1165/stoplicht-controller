@@ -33,7 +33,7 @@ class Program
         var specialSensorDataProcessor = new SpecialSensorDataProcessor(communicator, bridge);
         var priorityVehicleManager = new PriorityVehicleManager(communicator, Directions, PriorityVehicleQueue);
         var priorityCalculator = new PriorityCalculator(); // Create an instance of IPriorityCalculator
-        var trafficLightController = new TrafficLightController(communicator, Directions, bridge);
+        var trafficLightController = new TrafficLightController(communicator, Directions, bridge, PriorityVehicleQueue, cancellationTokenSource.Token);
 
         // Start subscriber en loopen
         var subscriberTask = Task.Run(() => communicator.StartSubscriber(), cancellationTokenSource.Token);
