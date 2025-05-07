@@ -17,7 +17,7 @@ namespace stoplicht_controller.Managers
         private const int BRIDGE_GREEN_DURATION = 9000;
         private const int BRIDGE_ORANGE_DURATION = 9000;
         private const int POST_BRIDGE_NORMAL_PHASE_MS = 30000;
-        private const int BRIDGE_COOLDOWN_SECONDS = 20;
+        private const int BRIDGE_COOLDOWN_SECONDS = 60;
         private const int SAFETY_CHECK_INTERVAL = 500;       // ms tussen safety checks
         private const int BRIDGE_SWITCH_EXTRA_DELAY_MS = 8000; // extra wachttijd bij switch
 
@@ -229,6 +229,9 @@ namespace stoplicht_controller.Managers
 
             Console.WriteLine("Wachten tot de brug fysiek dicht is...");
             await WaitForPhysicalBridgeState("dicht");
+
+            // kort wachten tot slagbomen weer dicht zijn
+            await Task.Delay(2000);
 
             MakeCrossingGreen();
         }
