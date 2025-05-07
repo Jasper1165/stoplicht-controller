@@ -2,209 +2,188 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using Newtonsoft.Json;
 using stoplicht_controller.Classes;
 using stoplicht_controller.Enums;
 
 namespace stoplicht_controller.Managers
 {
-    /// <summary>
-    ///  Afhandelen van prio-1 (direct groen) en prio-2 (vooraan in normale wachtrij) voertuigen.
-    ///  – Prio 1: “first-come = first-served”; blijft groen tot de entry uit de JSON verdwijnt
-    ///  – Prio 2: éénmalig naar de kop van normalQueue, géén onmiddellijke kleurwijziging
-    /// </summary>
     public class PriorityVehicleManager
     {
-        // constructor-injectie
         private readonly Communicator communicator;
-        private readonly List<Direction> directions;   // alle richtingen van de kruising
-        private readonly List<Direction> normalQueue;  // wachtrij die de TrafficLightController afwerkt
+        private readonly List<Direction> directions;
+        private readonly TrafficLightController trafficLightController;
 
-        // ================  STATUS  ================
-        private int? activePrio1 = null;               // huidig actieve prio-1 direction-id
-        private readonly Queue<int> waitingPrio1 = new(); // FIFO wachtrij overige prio-1’s
-        private readonly HashSet<int> queuedPrio2 = new(); // actieve prio-2’s in normalQueue
+        // Store processed priority vehicles to track changes
+        private List<PriorityVehicle> activePriorityVehicles = new();
+        private Dictionary<string, DateTime> lastProcessedTimeByLane = new();
 
-        // externe check voor TrafficLightController
-        public bool HasActivePrio1 => activePrio1.HasValue;
+        // Keep track of currently active priority 1 vehicle (if any)
+        private PriorityVehicle? activePrio1 = null;
+
+        public bool HasActivePrio1 => activePrio1 != null;
 
         public PriorityVehicleManager(
             Communicator communicator,
             List<Direction> directions,
-            List<Direction> normalQueue)
+            TrafficLightController trafficLightController)
         {
             this.communicator = communicator;
             this.directions = directions;
-            this.normalQueue = normalQueue;
+            this.trafficLightController = trafficLightController;
+
+            // Break circular dependency
+            this.trafficLightController.SetPriorityManager(this);
         }
 
-        // hoofd-loop – wordt idealiter in een aparte Task gestart
-        public void PriorityVehicleHandlerLoop(CancellationToken token)
+        public void Update()
         {
-            while (!token.IsCancellationRequested)
+            if (string.IsNullOrEmpty(communicator.PriorityVehicleData))
+                return;
+
+            try
             {
-                var json = communicator.PriorityVehicleData;
-                if (!string.IsNullOrEmpty(json))
+                // Parse the priority vehicle data
+                var priorityData = JsonConvert.DeserializeObject<PriorityVehicleQueue>(
+                    communicator.PriorityVehicleData);
+
+                if (priorityData == null || priorityData.Queue == null || !priorityData.Queue.Any())
                 {
-                    HandleJson(json);
-                    communicator.PriorityVehicleData = null;   // markeer als “verwerkt”
+                    // No priority vehicles in queue - clear any active priority status
+                    if (HasActivePrio1)
+                    {
+                        ClearPrio1();
+                    }
+                    activePriorityVehicles.Clear();
+                    return;
                 }
-                Thread.Sleep(50);
+
+                // Store current state for comparison
+                var previousPriorityVehicles = new List<PriorityVehicle>(activePriorityVehicles);
+                activePriorityVehicles = priorityData.Queue;
+
+                // Process priority 1 vehicles (emergency vehicles)
+                ProcessPrio1Vehicles();
+
+                // Process priority 2 vehicles (buses)
+                ProcessPrio2Vehicles();
+
+                // Check if any priority vehicles have been removed from the queue
+                CheckForRemovedVehicles(previousPriorityVehicles);
+            }
+            catch (Exception ex)
+            {
+                // Swallow exceptions but could log them in a production environment
+                Console.WriteLine($"Error processing priority vehicle data: {ex.Message}");
             }
         }
 
-        // -----------------  JSON  -----------------
-        private void HandleJson(string json)
+        private void ProcessPrio1Vehicles()
         {
-            // Parse ‘queue’ exact in de volgorde waarin hij binnenkomt
-            var wrapper = JsonConvert
-                .DeserializeObject<Dictionary<string, List<Dictionary<string, object>>>>(json)
-                    ?? new();
+            // Get priority 1 vehicles sorted by simulation time (FIFO)
+            var prio1Vehicles = activePriorityVehicles
+                .Where(v => v.Priority == 1)
+                .OrderBy(v => v.SimulationTimeMs)
+                .ToList();
 
-            var queue = wrapper.GetValueOrDefault("queue", new());
-
-            var prio1Seen = new HashSet<int>();   // alles wat NU nog in JSON staat
-            var prio2Seen = new HashSet<int>();
-
-            foreach (var item in queue)
+            if (!prio1Vehicles.Any())
             {
-                if (!item.TryGetValue("baan", out var baanObj) ||
-                    !item.TryGetValue("prioriteit", out var prioObj))
+                if (HasActivePrio1)
+                {
+                    ClearPrio1();
+                }
+                return;
+            }
+
+            // Take the first priority 1 vehicle (FIFO)
+            var firstPrio1 = prio1Vehicles.First();
+
+            // If we already have an active prio1 and it's different, update
+            if (activePrio1 != null && activePrio1.Lane != firstPrio1.Lane)
+            {
+                ClearPrio1();
+                ActivatePrio1(firstPrio1);
+            }
+            // If no active prio1, activate this one
+            else if (activePrio1 == null)
+            {
+                ActivatePrio1(firstPrio1);
+            }
+            // Otherwise, the same prio1 is still active, no action needed
+        }
+
+        private void ActivatePrio1(PriorityVehicle vehicle)
+        {
+            // Find the direction associated with this lane
+            var direction = GetDirectionFromLane(vehicle.Lane);
+            if (direction == null)
+                return;
+
+            // Activate priority 1 route
+            trafficLightController.OverrideWithSingleGreen(direction.Id);
+            activePrio1 = vehicle;
+        }
+
+        private void ClearPrio1()
+        {
+            trafficLightController.ClearOverride();
+            activePrio1 = null;
+        }
+
+        private void ProcessPrio2Vehicles()
+        {
+            // We don't process prio2 when a prio1 is active
+            if (HasActivePrio1)
+                return;
+
+            // Get priority 2 vehicles sorted by simulation time (FIFO)
+            var prio2Vehicles = activePriorityVehicles
+                .Where(v => v.Priority == 2)
+                .OrderBy(v => v.SimulationTimeMs)
+                .ToList();
+
+            // No Prio2 vehicles to process
+            if (!prio2Vehicles.Any())
+                return;
+
+            // For each Prio2 vehicle, increment the priority of its direction
+            // This will be handled in the traffic light controller's normal cycle logic
+            foreach (var vehicle in prio2Vehicles)
+            {
+                // Find the direction for this lane
+                var direction = GetDirectionFromLane(vehicle.Lane);
+                if (direction == null)
                     continue;
 
-                var baan = baanObj.ToString();
-                if (!baan.Contains('.')) continue;
-                if (!int.TryParse(baan.Split('.')[0], out int dirId)) continue;
-                if (!int.TryParse(prioObj.ToString(), out int prio)) continue;
-                if (!directions.Any(d => d.Id == dirId)) continue;
-
-                if (prio == 1)
-                {
-                    prio1Seen.Add(dirId);
-                    RegisterPrio1(dirId);             // FIFO-behoud
-                }
-                else if (prio == 2)
-                {
-                    prio2Seen.Add(dirId);
-                    RegisterPrio2(dirId);
-                }
-            }
-
-            CleanupEndedPrio1(prio1Seen);
-            CleanupEndedPrio2(prio2Seen);
-
-            PublishLightStates();
-        }
-
-        // -----------------  PRIO-1  -----------------
-        /// <summary>Voegt een prio-1 toe; als er nog niets actief is, wordt hij direct geactiveerd.</summary>
-        private void RegisterPrio1(int dirId)
-        {
-            if (activePrio1 == dirId || waitingPrio1.Contains(dirId)) return;
-
-            if (!activePrio1.HasValue)
-            {
-                ActivatePrio1(dirId);
-            }
-            else
-            {
-                waitingPrio1.Enqueue(dirId); // wacht rustig tot hij aan de beurt is
+                // The priority is already boosted in the TrafficLightController
+                // through the GetEffectivePriority method
+                // We don't need to do anything else here
             }
         }
 
-        private void ActivatePrio1(int dirId)
+        private void CheckForRemovedVehicles(List<PriorityVehicle> previousVehicles)
         {
-            activePrio1 = dirId;
-
-            // Zet alle conflicterende richtingen op Rood
-            var prioDir = directions.First(d => d.Id == dirId);
-            foreach (var interId in prioDir.Intersections)
+            // Check if the active Prio1 vehicle is no longer in the queue
+            if (activePrio1 != null && !activePriorityVehicles.Any(v =>
+                v.Lane == activePrio1.Lane && v.Priority == 1))
             {
-                var inter = directions.FirstOrDefault(d => d.Id == interId);
-                if (inter != null) inter.Color = LightColor.Red;
-            }
-
-            // Zet prio-1 zelf op Groen
-            prioDir.Color = LightColor.Green;
-            Console.WriteLine($"[PRIO-1] Direction {dirId} → GREEN (intersections RED)");
-        }
-
-        /// <summary>Controleert of de actieve prio-1 is verdwenen en maakt ruimte voor de volgende.</summary>
-        private void CleanupEndedPrio1(HashSet<int> stillPresentPrio1)
-        {
-            if (activePrio1.HasValue && !stillPresentPrio1.Contains(activePrio1.Value))
-            {
-                // einde noodprocedure voor deze richting
-                var dir = directions.First(d => d.Id == activePrio1.Value);
-                dir.Color = LightColor.Red;
-                Console.WriteLine($"[PRIO-1] Direction {dir.Id} ended → RED");
-
-                activePrio1 = null;
-            }
-
-            // start eventueel de volgende prio-1 uit de wachtrij
-            if (!activePrio1.HasValue && waitingPrio1.TryDequeue(out int nextId))
-                ActivatePrio1(nextId);
-        }
-
-        // -----------------  PRIO-2  -----------------
-        private void RegisterPrio2(int dirId)
-        {
-            if (queuedPrio2.Contains(dirId)) return;
-
-            // Verwijder eerst eventuele kopie uit normale queue
-            normalQueue.RemoveAll(d => d.Id == dirId);
-
-            // Plaats als nieuwe entry VOORIN de queue (Priority = 2)
-            var original = directions.First(d => d.Id == dirId);
-            normalQueue.Insert(0, new Direction
-            {
-                Id = dirId,
-                Priority = 2,
-                Color = original.Color,
-                Intersections = original.Intersections
-            });
-
-            queuedPrio2.Add(dirId);
-            Console.WriteLine($"[PRIO-2] Direction {dirId} moved to front of queue");
-        }
-
-        private void CleanupEndedPrio2(HashSet<int> stillPresentPrio2)
-        {
-            var ended = queuedPrio2.Except(stillPresentPrio2).ToList();
-            foreach (var id in ended)
-            {
-                queuedPrio2.Remove(id);
-
-                // vervang entry met een “normale” versie zodat de prioriteit terugvalt
-                normalQueue.RemoveAll(d => d.Id == id && d.Priority == 2);
-                var orig = directions.First(d => d.Id == id);
-                normalQueue.Add(orig);
-
-                Console.WriteLine($"[PRIO-2] Direction {id} ended → returned to normal queue");
+                ClearPrio1();
             }
         }
 
-        // -----------------  MQTT / UI  -----------------
-        private void PublishLightStates()
+        private Direction? GetDirectionFromLane(string lane)
         {
-            var map = new Dictionary<string, string>();
-            foreach (var dir in directions)
-            {
-                if (dir.TrafficLights == null) continue;
-                foreach (var tl in dir.TrafficLights)
-                {
-                    if (tl == null) continue;
-                    map[tl.Id] = dir.Color switch
-                    {
-                        LightColor.Green => "groen",
-                        LightColor.Orange => "oranje",
-                        _ => "rood"
-                    };
-                }
-            }
-            communicator.PublishMessage("stoplichten", map);
+            // Parse the lane ID to get the direction ID
+            // Lane format is usually "DirectionId.LaneNumber"
+            if (!lane.Contains('.'))
+                return null;
+
+            string[] parts = lane.Split('.');
+            if (parts.Length != 2 || !int.TryParse(parts[0], out int directionId))
+                return null;
+
+            // Find the direction with this ID
+            return directions.FirstOrDefault(d => d.Id == directionId);
         }
     }
 }

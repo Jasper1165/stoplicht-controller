@@ -31,13 +31,13 @@ class Program
 
         // Managers
         var specialSensorDataProcessor = new SpecialSensorDataProcessor(communicator, bridge);
-        var priorityVehicleManager = new PriorityVehicleManager(communicator, Directions, PriorityVehicleQueue);
-        var priorityCalculator = new PriorityCalculator(); // Create an instance of IPriorityCalculator
         var trafficLightController = new TrafficLightController(communicator, Directions, bridge);
+        var priorityVehicleManager = new PriorityVehicleManager(communicator, Directions, trafficLightController);
+        var priorityCalculator = new PriorityCalculator(); // Create an instance of IPriorityCalculator
 
         // Start subscriber en loopen
         var subscriberTask = Task.Run(() => communicator.StartSubscriber(), cancellationTokenSource.Token);
-        var priorityTask = Task.Run(() => priorityVehicleManager.PriorityVehicleHandlerLoop(cancellationTokenSource.Token), cancellationTokenSource.Token);
+        var priorityTask = Task.Run(() => priorityVehicleManager.Update(), cancellationTokenSource.Token);
         var sensorSpecialTask = Task.Run(() => specialSensorDataProcessor.SpecialSensorLoop(cancellationTokenSource.Token), cancellationTokenSource.Token);
         var trafficLightTask = Task.Run(() => trafficLightController.TrafficLightCycleLoop(cancellationTokenSource.Token), cancellationTokenSource.Token);
 
