@@ -13,8 +13,8 @@ class Program
     public static List<Direction> PriorityVehicleQueue { get; set; } = new List<Direction>();
 
     // Communicator instellingen
-    static string subscriberAddress = "tcp://10.121.17.233:5556";
-    static string publisherAddress = "tcp://10.121.17.233:5555";
+    static string subscriberAddress = "tcp://192.168.1.177:5556";
+    static string publisherAddress = "tcp://192.168.1.177:5555";
     static string[] topics = { "sensoren_rijbaan", "voorrangsvoertuig", "sensoren_speciaal", "sensoren_bruggen" };
 
     static Bridge bridge = new Bridge();
