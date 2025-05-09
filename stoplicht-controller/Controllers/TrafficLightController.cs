@@ -1,4 +1,3 @@
-// TrafficLightController.cs
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,9 +13,9 @@ namespace stoplicht_controller.Managers
     public class TrafficLightController
     {
         // ========= CONFIG =========
-        private const int ORANGE_DURATION = 8000;
-        private const int DEFAULT_GREEN_DURATION = 7300;
-        private const int SHORT_GREEN_DURATION = 5000;
+        private const int ORANGE_DURATION = 3000;
+        private const int DEFAULT_GREEN_DURATION = 8000;
+        private const int SHORT_GREEN_DURATION = 8000;
         private const int PRIORITY_THRESHOLD = 3;
         private const int HIGH_PRIORITY_THRESHOLD = 6;
         private const double AGING_SCALE_SECONDS = 7;
@@ -27,6 +26,11 @@ namespace stoplicht_controller.Managers
 
         private static readonly HashSet<int> JAM_BLOCK_DIRECTIONS = new() { 8, 12, 4 };
         private static readonly HashSet<int> BRIDGE_DIRECTIONS = new() { 71, 72 };
+
+        // Jam-phase state
+        private bool jamPhaseInProgress = false;
+        private bool jamPhaseOrange = false;
+        private DateTime jamPhaseStartTime;
 
         // ========= STATE =========
         private DateTime lastSwitchTime = DateTime.Now;
@@ -74,8 +78,11 @@ namespace stoplicht_controller.Managers
             _ = Task.Run(BridgeLoop, token);
             _ = Task.Run(PriorityLoop, token);
 
+            Console.WriteLine("Traffic Light Controller started");
+
             if (directions.Any())
             {
+                Console.WriteLine($"Initial directions count: {directions.Count}");
                 SwitchTrafficLights();
                 SendTrafficLightStates();
             }
@@ -111,17 +118,68 @@ namespace stoplicht_controller.Managers
 
         private void UpdateTrafficLights()
         {
+            // Debug info
+            Console.WriteLine($"Current green: {string.Join(", ", currentGreenDirections.Select(d => d.Id))}");
+            Console.WriteLine($"Current orange: {string.Join(", ", currentOrangeDirections.Select(d => d.Id))}");
+
             if (priorityManager?.HasActivePrio1 == true)
                 return;
 
+            // Hysteresis for jam detection
             bool jam = bridge.TrafficJamNearBridge;
             if (jam != jamEngaged && (DateTime.Now - jamStateChangedAt).TotalMilliseconds >= JAM_HYST_MS)
             {
                 jamEngaged = jam;
                 jamStateChangedAt = DateTime.Now;
+                Console.WriteLine($"Jam state changed to: {jamEngaged}");
+                // reset phase when engagement changes
+                jamPhaseInProgress = false;
             }
+
+            // Handle Jam-Phase
             if (jamEngaged)
-                ForceJamDirectionsToRed();
+            {
+                // Start Orange Phase
+                if (!jamPhaseInProgress)
+                {
+                    jamPhaseInProgress = true;
+                    jamPhaseOrange = true;
+                    jamPhaseStartTime = DateTime.Now;
+                    currentOrangeDirections = directions
+                        .Where(d => JAM_BLOCK_DIRECTIONS.Contains(d.Id) && d.Color == LightColor.Green)
+                        .ToList();
+                    foreach (var d in currentOrangeDirections)
+                        d.Color = LightColor.Orange;
+                    lastOrangeTime = DateTime.Now;
+                    SendTrafficLightStates();
+                    Console.WriteLine("Jam phase started - orange lights activated");
+                }
+                // Transition to Red Phase
+                else if (jamPhaseOrange && (DateTime.Now - jamPhaseStartTime).TotalMilliseconds >= ORANGE_DURATION)
+                {
+                    foreach (var d in currentOrangeDirections)
+                        d.Color = LightColor.Red;
+                    currentOrangeDirections.Clear();
+                    jamPhaseOrange = false;
+                    SendTrafficLightStates();
+                    Console.WriteLine("Jam phase - orange lights turned to red");
+                }
+                return;
+            }
+            else if (jamPhaseInProgress)
+            {
+                // Reset jam-phase flags when jam cleared and ensure lights get reset
+                if (jamPhaseOrange)
+                {
+                    foreach (var d in currentOrangeDirections)
+                        d.Color = LightColor.Red;
+                    currentOrangeDirections.Clear();
+                    SendTrafficLightStates();
+                    Console.WriteLine("Jam cleared - orange lights reset to red");
+                }
+                jamPhaseInProgress = false;
+                jamPhaseOrange = false;
+            }
 
             var now = DateTime.Now;
             var sinceG = (now - lastSwitchTime).TotalMilliseconds;
@@ -227,30 +285,23 @@ namespace stoplicht_controller.Managers
             return cluster;
         }
 
-        private void ForceJamDirectionsToRed()
-        {
-            foreach (var id in JAM_BLOCK_DIRECTIONS)
-            {
-                var dir = directions.FirstOrDefault(d => d.Id == id);
-                if (dir != null && dir.Color != LightColor.Red)
-                {
-                    dir.Color = LightColor.Red;
-                    currentGreenDirections.Remove(dir);
-                    currentOrangeDirections.Remove(dir);
-                }
-            }
-        }
-
         private List<Direction> GetExtraGreenCandidates()
         {
-            var blocked = bridgeController.GetBridgeIntersectionSet();
+            // Haal alleen de specifieke richtingen op die direct met de brug te maken hebben
+            var bridgeSpecificDirections = bridgeController.GetBridgeIntersectionSet();
+
             var avail = directions
-                .Where(d => GetPriority(d) > 0
-                            && !currentGreenDirections.Contains(d)
-                            && !blocked.Contains(d.Id)
-                            && !(bridge.TrafficJamNearBridge && JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
+                .Where(d =>
+                          GetPriority(d) > 0 &&  // Hier houden we de prioriteitscontrole WEL aan
+                          !currentGreenDirections.Contains(d)
+                          // Alleen brug-gerelateerde richtingen blokkeren als de brug open is
+                          && !(bridgeSpecificDirections.Contains(d.Id) && IsBridgeOpen())
+                          && !(bridge.TrafficJamNearBridge && JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
                 .OrderByDescending(GetEffectivePriority)
-                .ThenBy(d => d.Id);
+                .ThenBy(d => d.Id)
+                .ToList();
+
+            Console.WriteLine($"Extra green candidates: {string.Join(", ", avail.Select(d => d.Id))}");
 
             var pick = new List<Direction>();
             foreach (var d in avail)
@@ -259,7 +310,16 @@ namespace stoplicht_controller.Managers
                     !currentGreenDirections.Any(x => HasConflict(x, d)))
                     pick.Add(d);
             }
+
+            Console.WriteLine($"Selected extra green: {string.Join(", ", pick.Select(d => d.Id))}");
             return pick;
+        }
+
+        private bool IsBridgeOpen()
+        {
+            // Check of de brug open is (niet "dicht" of "dicht_en_geblokkeerd")
+            return bridgeController.CurrentBridgeState != "dicht" &&
+                   bridgeController.CurrentBridgeState != "dicht_en_geblokkeerd";
         }
 
         private void SwitchTrafficLights()
@@ -267,10 +327,19 @@ namespace stoplicht_controller.Managers
             if (isOverrideActive || priorityManager?.HasActivePrio1 == true)
                 return;
 
-            var blocked = bridgeController.GetBridgeIntersectionSet();
+            // Zorg ervoor dat alle oranje lichten eerst naar rood gaan
+            if (currentOrangeDirections.Any())
+            {
+                SetLightsToRed();
+            }
+
+            // Haal alleen de specifieke richtingen op die direct met de brug te maken hebben
+            var bridgeSpecificDirections = bridgeController.GetBridgeIntersectionSet();
+
             var avail = directions
                 .Where(d => GetPriority(d) > 0
-                            && !blocked.Contains(d.Id)
+                            // Alleen brug-gerelateerde richtingen blokkeren als de brug open is
+                            && !(bridgeSpecificDirections.Contains(d.Id) && IsBridgeOpen())
                             && !(bridge.TrafficJamNearBridge && JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
                 .OrderByDescending(GetEffectivePriority)
                 .ThenBy(d => d.Id)
