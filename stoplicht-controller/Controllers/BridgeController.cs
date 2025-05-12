@@ -28,6 +28,9 @@ namespace stoplicht_controller.Managers
         private readonly List<Direction> directions;
         private readonly Bridge bridge;
 
+        private bool barriersOpen = false;
+        private readonly string[] barrierIds = { "61.1", "62.1", "63.1", "64.1" };
+
         public bool IsHandlingPriority { get; private set; }
 
         private readonly object bridgeLock = new();
@@ -71,7 +74,7 @@ namespace stoplicht_controller.Managers
             var dirB = directions.First(d => d.Id == bridgeDirectionB);
             dirA.Color = LightColor.Red;
             dirB.Color = LightColor.Red;
-            SendTrafficLightStates();
+            SendBridgeStates();
 
             await Task.Delay(approachDelayMs);
             await WaitForPhysicalBridgeState("dicht", CancellationToken.None);
@@ -98,10 +101,13 @@ namespace stoplicht_controller.Managers
             if (dirA != null) dirA.Color = LightColor.Red;
             if (dirB != null) dirB.Color = LightColor.Red;
 
+            // open barriers on startup
+            ToggleBarriers(false);
+
             OpenConflicts(dirA);
             OpenConflicts(dirB);
 
-            SendTrafficLightStates();
+            SendBridgeStates();
         }
 
         private void OpenConflicts(Direction dir)
@@ -256,13 +262,17 @@ namespace stoplicht_controller.Managers
             var dirB = directions.First(d => d.Id == bridgeDirectionB);
             dirA.Color = LightColor.Red;
             dirB.Color = LightColor.Red;
-            SendTrafficLightStates();
+            SendBridgeStates();
 
             if (bridgeIsClosed)
             {
                 // Als de brug dicht is, zet alleen de verkeerslichten op groen
                 Console.WriteLine("Prioriteitsvoertuig gedetecteerd met gesloten brug - verkeerslichten op groen");
                 await Task.Delay(2_000);
+                // open barriers
+                ToggleBarriers(false);
+                await Task.Delay(5_000);
+                // set lights to green
                 MakeCrossingGreen();
             }
             else
@@ -272,36 +282,48 @@ namespace stoplicht_controller.Managers
                 await Task.Delay(5_000);
                 await WaitUntilNoVesselUnderBridge(CancellationToken.None);
 
+                // close barriers
+                ToggleBarriers(true);
+                await Task.Delay(5_000);
+
                 currentBridgeState = "rood";
-                SendTrafficLightStates();
+                SendBridgeStates();
                 await WaitForPhysicalBridgeState("dicht", CancellationToken.None);
                 await Task.Delay(2_000);
                 MakeCrossingGreen();
             }
-
             IsHandlingPriority = false;
         }
 
         private async Task HandleBridgeSession(CancellationToken token)
         {
+            // throw if cancelled
             token.ThrowIfCancellationRequested();
+
+            // get the bridge direction
             var dirA = directions.First(d => d.Id == bridgeDirectionA);
             var dirB = directions.First(d => d.Id == bridgeDirectionB);
             bool sideA = GetPriority(dirA) > 0;
             bool sideB = GetPriority(dirB) > 0;
             if (!sideA && !sideB) return;
 
+            // set all conflicting directions to red
             await ForceConflictDirectionsToRed(bridgeDirectionA, token);
             await ForceConflictDirectionsToRed(bridgeDirectionB, token);
 
+            // wait for vehicle on bridge to pass
             Console.WriteLine("Waiting until no vehicle on the bridge...");
             await WaitUntilNoBridgeVehicle(token);
 
+            // close the barriers
+            ToggleBarriers(true);
+            await Task.Delay(5_000, token);
+
             currentBridgeState = "groen";
-            SendTrafficLightStates();
+            SendBridgeStates();
 
             await WaitForPhysicalBridgeState("open", token);
-
+            // lets boats pass
             if (sideA)
             {
                 await LetBoatsPass(bridgeDirectionA, token);
@@ -312,7 +334,7 @@ namespace stoplicht_controller.Managers
                     await Task.Delay(BRIDGE_SWITCH_EXTRA_DELAY_MS, token);
                 }
             }
-
+            // lets boats pass on the other side
             sideB = GetPriority(dirB) > 0 || sideB;
             if (sideB)
                 await LetBoatsPass(bridgeDirectionB, token);
@@ -320,11 +342,17 @@ namespace stoplicht_controller.Managers
             Console.WriteLine("Waiting until no vessel under bridge...");
             await WaitUntilNoVesselUnderBridge(token);
 
+            // close bridge
             currentBridgeState = "rood";
-            SendTrafficLightStates();
+            SendBridgeStates();
 
+            // wait for the bridge to close
             await WaitForPhysicalBridgeState("dicht", token);
             await Task.Delay(2_000, token);
+
+            // close the barriers
+            ToggleBarriers(false);
+            await Task.Delay(5_000, token);
 
             // Restore road traffic after normal bridge session
             MakeCrossingGreen();
@@ -380,22 +408,22 @@ namespace stoplicht_controller.Managers
         private async Task LetBoatsPass(int dirId, CancellationToken token)
         {
             var dir = directions.First(d => d.Id == dirId);
-            dir.Color = LightColor.Green; SendTrafficLightStates();
+            dir.Color = LightColor.Green; SendBridgeStates();
             await Task.Delay(BRIDGE_GREEN_DURATION, token);
-            dir.Color = LightColor.Orange; SendTrafficLightStates();
+            dir.Color = LightColor.Orange; SendBridgeStates();
             await Task.Delay(BRIDGE_ORANGE_DURATION + 3_000, token);
-            dir.Color = LightColor.Red; SendTrafficLightStates();
+            dir.Color = LightColor.Red; SendBridgeStates();
         }
 
         private async Task ForceConflictDirectionsToRed(int bridgeDirId, CancellationToken token)
         {
             var conflicts = directions.Where(d => d.Id != bridgeDirId && d.Intersections.Contains(bridgeDirId)).ToList();
             foreach (var d in conflicts.Where(d => d.Color == LightColor.Green)) d.Color = LightColor.Orange;
-            SendTrafficLightStates();
+            SendBridgeStates();
             if (conflicts.Any(d => d.Color == LightColor.Orange))
                 await Task.Delay(BRIDGE_ORANGE_DURATION, token);
             foreach (var d in conflicts) d.Color = LightColor.Red;
-            SendTrafficLightStates();
+            SendBridgeStates();
         }
 
         private int GetPriority(Direction dir)
@@ -410,13 +438,15 @@ namespace stoplicht_controller.Managers
             return p;
         }
 
-        private void SendTrafficLightStates()
+        private void SendBridgeStates()
         {
             if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;
             try
             {
                 var laneSensors = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);
                 if (laneSensors == null) return;
+
+                // bestaand payload
                 var payload = laneSensors.Keys.ToDictionary(
                     id => id,
                     id =>
@@ -427,7 +457,16 @@ namespace stoplicht_controller.Managers
                              : dir.Color == LightColor.Orange ? "oranje"
                              : "rood";
                     });
+
+                // voeg brug-toestand toe
                 payload["81.1"] = CurrentBridgeState;
+
+                // **nieuw**: voeg slagbomen toe onderaan
+                var barrierState = barriersOpen ? "rood" : "groen";
+                foreach (var bid in barrierIds)
+                    payload[bid] = barrierState;
+
+                // publiceer alles in één boodschap
                 communicator.PublishMessage("stoplichten", payload);
             }
             catch { }
@@ -442,7 +481,13 @@ namespace stoplicht_controller.Managers
             var dirB = directions.First(d => d.Id == bridgeDirectionB);
             OpenConflicts(dirA);
             OpenConflicts(dirB);
-            SendTrafficLightStates();
+            SendBridgeStates();
+        }
+
+        private void ToggleBarriers(bool open)
+        {
+            barriersOpen = open;
+            SendBridgeStates();
         }
     }
 }
