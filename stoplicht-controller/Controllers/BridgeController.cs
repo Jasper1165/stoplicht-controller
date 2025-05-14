@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +15,7 @@ namespace stoplicht_controller.Managers
         // ───────────────────────────────────────────────────────────────
         //  ► CONFIG CONSTANTS  ─ timings are in milliseconds unless noted
         // ───────────────────────────────────────────────────────────────
-        private const int BRIDGE_GREEN_DURATION = 15_000;     // boat pass A/B
+        private const int BRIDGE_GREEN_DURATION = 20_000;     // boat pass A/B
         private const int BRIDGE_ORANGE_DURATION = 10_000;
         private const int POST_BRIDGE_NORMAL_PHASE_MS = 30_000;  // traffic free-flow
         private const int BRIDGE_COOLDOWN_SECONDS = 60;         // min gap between sessions
@@ -28,11 +29,9 @@ namespace stoplicht_controller.Managers
         private readonly List<Direction> directions;
         private readonly Bridge bridge;
 
-        private bool barriersOpen = false;
-        private readonly string[] barrierIds = { "61.1", "62.1", "63.1", "64.1" };
+        private HashSet<int> activeConflictDirections = new HashSet<int>();
 
         public bool IsHandlingPriority { get; private set; }
-
         private readonly object bridgeLock = new();
         private CancellationTokenSource bridgeCts;
         private Task bridgeTask;
@@ -78,7 +77,7 @@ namespace stoplicht_controller.Managers
 
             await Task.Delay(approachDelayMs);
             await WaitForPhysicalBridgeState("dicht", CancellationToken.None);
-            MakeCrossingGreen();
+            ChangeCrossingTrafficLights(LightColor.Green);
         }
 
         // ───────────────────────────────────────────────────────────────
@@ -92,21 +91,26 @@ namespace stoplicht_controller.Managers
             SetInitialBridgeState();
         }
 
-        private void SetInitialBridgeState()
+        private async void SetInitialBridgeState()
         {
             var dirA = directions.FirstOrDefault(d => d.Id == bridgeDirectionA);
             var dirB = directions.FirstOrDefault(d => d.Id == bridgeDirectionB);
 
+            // Always set the bridge state to red
             currentBridgeState = "rood";
+
+            // Set bridge direction signals to red if they exist
             if (dirA != null) dirA.Color = LightColor.Red;
             if (dirB != null) dirB.Color = LightColor.Red;
 
-            // open barriers on startup
-            ToggleBarriers(false);
-
+            // If directions exist, open their conflicts
             OpenConflicts(dirA);
             OpenConflicts(dirB);
 
+            // Always call MakeCrossingGreen to ensure intersections go green regardless of IDs
+            ChangeCrossingTrafficLights(LightColor.Green);
+
+            // Send updated states
             SendBridgeStates();
         }
 
@@ -269,28 +273,28 @@ namespace stoplicht_controller.Managers
                 // Als de brug dicht is, zet alleen de verkeerslichten op groen
                 Console.WriteLine("Prioriteitsvoertuig gedetecteerd met gesloten brug - verkeerslichten op groen");
                 await Task.Delay(2_000);
+
                 // open barriers
-                ToggleBarriers(false);
                 await Task.Delay(5_000);
                 // set lights to green
-                MakeCrossingGreen();
+                ChangeCrossingTrafficLights(LightColor.Green);
             }
             else
             {
                 // Als de brug open staat, volg het oorspronkelijke proces
                 Console.WriteLine("Prioriteitsvoertuig gedetecteerd met open brug - wacht tot brug sluit");
-                await Task.Delay(5_000);
+                ChangeCrossingTrafficLights(LightColor.Red);
                 await WaitUntilNoVesselUnderBridge(CancellationToken.None);
 
-                // close barriers
-                ToggleBarriers(true);
+                // wait
                 await Task.Delay(5_000);
 
                 currentBridgeState = "rood";
                 SendBridgeStates();
+
                 await WaitForPhysicalBridgeState("dicht", CancellationToken.None);
                 await Task.Delay(2_000);
-                MakeCrossingGreen();
+                ChangeCrossingTrafficLights(LightColor.Green);
             }
             IsHandlingPriority = false;
         }
@@ -308,15 +312,17 @@ namespace stoplicht_controller.Managers
             if (!sideA && !sideB) return;
 
             // set all conflicting directions to red
-            await ForceConflictDirectionsToRed(bridgeDirectionA, token);
-            await ForceConflictDirectionsToRed(bridgeDirectionB, token);
+            ChangeCrossingTrafficLights(LightColor.Red);
+            ChangeCrossingTrafficLights(LightColor.Red);
+
+            // wait
+            await Task.Delay(2_000, token);
 
             // wait for vehicle on bridge to pass
             Console.WriteLine("Waiting until no vehicle on the bridge...");
             await WaitUntilNoBridgeVehicle(token);
 
             // close the barriers
-            ToggleBarriers(true);
             await Task.Delay(5_000, token);
 
             currentBridgeState = "groen";
@@ -348,14 +354,12 @@ namespace stoplicht_controller.Managers
 
             // wait for the bridge to close
             await WaitForPhysicalBridgeState("dicht", token);
-            await Task.Delay(2_000, token);
 
             // close the barriers
-            ToggleBarriers(false);
             await Task.Delay(5_000, token);
 
             // Restore road traffic after normal bridge session
-            MakeCrossingGreen();
+            ChangeCrossingTrafficLights(LightColor.Green);
         }
 
         private async Task WaitUntilNoBridgeVehicle(CancellationToken token)
@@ -415,17 +419,6 @@ namespace stoplicht_controller.Managers
             dir.Color = LightColor.Red; SendBridgeStates();
         }
 
-        private async Task ForceConflictDirectionsToRed(int bridgeDirId, CancellationToken token)
-        {
-            var conflicts = directions.Where(d => d.Id != bridgeDirId && d.Intersections.Contains(bridgeDirId)).ToList();
-            foreach (var d in conflicts.Where(d => d.Color == LightColor.Green)) d.Color = LightColor.Orange;
-            SendBridgeStates();
-            if (conflicts.Any(d => d.Color == LightColor.Orange))
-                await Task.Delay(BRIDGE_ORANGE_DURATION, token);
-            foreach (var d in conflicts) d.Color = LightColor.Red;
-            SendBridgeStates();
-        }
-
         private int GetPriority(Direction dir)
         {
             int p = 0;
@@ -461,10 +454,16 @@ namespace stoplicht_controller.Managers
                 // voeg brug-toestand toe
                 payload["81.1"] = CurrentBridgeState;
 
-                // **nieuw**: voeg slagbomen toe onderaan
-                var barrierState = barriersOpen ? "rood" : "groen";
-                foreach (var bid in barrierIds)
-                    payload[bid] = barrierState;
+                // TODO: hetzelfde voor groen maken (brug open)
+                // Voeg conflicterende richtings IDs toe aan de payload
+                if (activeConflictDirections.Count > 0)
+                {
+                    foreach (var conflictId in activeConflictDirections)
+                    {
+                        // Add the conflict ID to the payload with a special prefix to identify it
+                        payload[$"{conflictId}.1"] = currentBridgeState == "rood" ? "groen" : "rood";
+                    }
+                }
 
                 // publiceer alles in één boodschap
                 communicator.PublishMessage("stoplichten", payload);
@@ -475,19 +474,26 @@ namespace stoplicht_controller.Managers
         // ───────────────────────────────────────────────────────────────
         //  ► HELPER FOR RESTORING ROAD TRAFFIC
         // ───────────────────────────────────────────────────────────────
-        private void MakeCrossingGreen()
-        {
-            var dirA = directions.First(d => d.Id == bridgeDirectionA);
-            var dirB = directions.First(d => d.Id == bridgeDirectionB);
-            OpenConflicts(dirA);
-            OpenConflicts(dirB);
-            SendBridgeStates();
-        }
 
-        private void ToggleBarriers(bool open)
+        private void ChangeCrossingTrafficLights(LightColor color)
         {
-            barriersOpen = open;
-            SendBridgeStates();
+            var conflicts = directions.Where(d => d.Id != bridgeDirectionA && d.Intersections.Contains(bridgeDirectionA)).ToList();
+
+            // Clear previous conflicts and add new ones
+            activeConflictDirections.Clear();
+
+            foreach (var d in conflicts)
+            {
+                // Skip the bridge directions
+                if (d.Id == bridgeDirectionA || d.Id == bridgeDirectionB) continue;
+
+                d.Color = color;
+
+                // Add this conflict direction ID to our tracking set
+                activeConflictDirections.Add(d.Id);
+            }
+
+            // SendBridgeStates();
         }
     }
 }

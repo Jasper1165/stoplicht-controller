@@ -13,16 +13,15 @@ namespace stoplicht_controller.Managers
     public class TrafficLightController
     {
         // ========= CONFIG =========
-        private const int ORANGE_DURATION = 3000;
-        private const int DEFAULT_GREEN_DURATION = 8000;
-        private const int SHORT_GREEN_DURATION = 8000;
+        private const int ORANGE_DURATION = 3_500;
+        private const int DEFAULT_GREEN_DURATION = 10_000;
+        private const int SHORT_GREEN_DURATION = 10_000;
         private const int PRIORITY_THRESHOLD = 3;
         private const int HIGH_PRIORITY_THRESHOLD = 6;
         private const double AGING_SCALE_SECONDS = 7;
 
         // Nieuwe threshold voor file-detectie (ms)
         private const int JAM_THRESHOLD_MS = 10_000;
-
         private bool jamEngaged = false;
         private DateTime? jamDetectedAt = null;
         private DateTime? jamClearedAt = null;
@@ -98,7 +97,7 @@ namespace stoplicht_controller.Managers
             while (true)
             {
                 bridgeController.ProcessBridgeSensorData();
-                try { await bridgeController.UpdateAsync(); }
+                try { bridgeController.UpdateAsync(); }
                 catch (Exception ex) { Console.WriteLine($"Bridge update error: {ex}"); }
                 await Task.Delay(500);
             }

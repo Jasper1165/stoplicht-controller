@@ -57,7 +57,11 @@ namespace stoplicht_controller.Classes
                             string receivedTopic = subscriber.ReceiveFrameString().Trim();
                             // Lees het tweede frame, dat de payload bevats
                             string message = subscriber.ReceiveFrameString().Trim();
-                            // Console.WriteLine($"Bericht ontvangen op topic '{receivedTopic}': {message}");
+                            if (receivedTopic == "voorrangsvoertuig")
+                            {
+                                Console.WriteLine($"Bericht ontvangen op topic '{receivedTopic}': {message}");
+
+                            }
                             ProcessMessage(receivedTopic, message);
                         }
                     }
@@ -109,7 +113,7 @@ namespace stoplicht_controller.Classes
             {
                 publisher = new PublisherSocket();
                 publisher.Bind(this.publishAddress);
-                Console.WriteLine($"Publisher opnieuw verbonden met {publishAddress}");
+                // Console.WriteLine($"Publisher opnieuw verbonden met {publishAddress}");
             }
 
             // Verwerk JSON payload
@@ -119,7 +123,7 @@ namespace stoplicht_controller.Classes
 
             // Verstuur topic + bericht als multipart
             publisher.SendMoreFrame(topic).SendFrame(jsonMessage);
-            // Console.WriteLine($"Bericht verzonden naar topic '{topic}': {jsonMessage}");
+            Console.WriteLine($"Bericht verzonden naar topic '{topic}': {jsonMessage}");
         }
     }
 }
