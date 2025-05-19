@@ -266,6 +266,9 @@ namespace stoplicht_controller.Managers
             dirB.Color = LightColor.Red;
             SendBridgeStates();
 
+
+            Console.WriteLine("brugstatus voor prioriteitsvoertuig: " + physicalBridgeState);
+
             if (bridgeIsClosed)
             {
                 // Als de brug dicht is, zet alleen de verkeerslichten op groen
