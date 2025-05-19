@@ -244,10 +244,16 @@ namespace stoplicht_controller.Managers
             SendTrafficLightStates();
         }
 
-        public void ClearOverride()
+        public async Task ClearOverride()
         {
             if (!isOverrideActive) return;
             var protect = GetProtectedBridgeCluster();
+            foreach (var d in directions)
+                if (!protect.Contains(d.Id))
+                    d.Color = LightColor.Orange;
+
+            await Task.Delay(ORANGE_DURATION);
+
             foreach (var d in directions)
                 if (!protect.Contains(d.Id))
                     d.Color = LightColor.Red;
