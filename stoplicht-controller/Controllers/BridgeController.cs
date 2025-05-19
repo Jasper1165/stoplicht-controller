@@ -164,11 +164,11 @@ namespace stoplicht_controller.Managers
         // ───────────────────────────────────────────────────────────────
         public async Task UpdateAsync()
         {
-            // if (CheckForPriorityVehicle())
-            // {
-            //     await HandlePriorityVehicleAsync();
-            //     return;
-            // }
+            if (CheckForPriorityVehicle())
+            {
+                await HandlePriorityVehicleAsync();
+                return;
+            }
 
             ProcessBridgeSensorData();
             ResetBridgeCycle();
@@ -287,11 +287,13 @@ namespace stoplicht_controller.Managers
                 // wait
                 await Task.Delay(5_000);
 
+                activeConflictDirections.Clear();
                 currentBridgeState = "rood";
                 SendBridgeStates();
 
                 await WaitForPhysicalBridgeState("dicht", CancellationToken.None);
                 await Task.Delay(2_000);
+
                 ChangeCrossingTrafficLights(LightColor.Green);
             }
             IsHandlingPriority = false;
