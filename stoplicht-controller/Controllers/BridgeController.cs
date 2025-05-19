@@ -166,7 +166,9 @@ namespace stoplicht_controller.Managers
         {
             if (CheckForPriorityVehicle())
             {
-                await HandlePriorityVehicleAsync();
+                var priorityToken = bridgeCts.Token;
+
+                await HandlePriorityVehicleAsync(priorityToken);
                 return;
             }
 
@@ -241,7 +243,7 @@ namespace stoplicht_controller.Managers
             catch { return false; }
         }
 
-        private async Task HandlePriorityVehicleAsync()
+        private async Task HandlePriorityVehicleAsync(CancellationToken token)
         {
             IsHandlingPriority = true;
             Task running = null;
@@ -284,7 +286,7 @@ namespace stoplicht_controller.Managers
                 Console.WriteLine("Prioriteitsvoertuig gedetecteerd met open brug - wacht tot brug sluit");
 
                 Console.WriteLine("Waiting until no vessel under bridge...");
-                await WaitUntilNoVesselUnderBridge(CancelationToken.None);
+                await WaitUntilNoVesselUnderBridge(token);
 
                 activeConflictDirections.Clear();
                 // close bridge
@@ -292,7 +294,7 @@ namespace stoplicht_controller.Managers
                 SendBridgeStates();
 
                 // wait for the bridge to close
-                await WaitForPhysicalBridgeState("dicht", CancelationToken.None);
+                await WaitForPhysicalBridgeState("dicht", token);
 
                 // close the barriers
                 await Task.Delay(5_000, token);
