@@ -267,8 +267,6 @@ namespace stoplicht_controller.Managers
             SendBridgeStates();
 
 
-            Console.WriteLine("brugstatus voor prioriteitsvoertuig: " + physicalBridgeState);
-
             if (bridgeIsClosed)
             {
                 // Als de brug dicht is, zet alleen de verkeerslichten op groen
@@ -284,21 +282,25 @@ namespace stoplicht_controller.Managers
             {
                 // Als de brug open staat, volg het oorspronkelijke proces
                 Console.WriteLine("Prioriteitsvoertuig gedetecteerd met open brug - wacht tot brug sluit");
-                ChangeCrossingTrafficLights(LightColor.Red);
-                await WaitUntilNoVesselUnderBridge(CancellationToken.None);
 
-                // wait
-                await Task.Delay(5_000);
+                Console.WriteLine("Waiting until no vessel under bridge...");
+                await WaitUntilNoVesselUnderBridge(token);
 
-                // activeConflictDirections.Clear();
+                activeConflictDirections.Clear();
+                // close bridge
                 currentBridgeState = "rood";
                 SendBridgeStates();
 
-                await WaitForPhysicalBridgeState("dicht", CancellationToken.None);
-                await Task.Delay(2_000);
+                // wait for the bridge to close
+                await WaitForPhysicalBridgeState("dicht", token);
 
+                // close the barriers
+                await Task.Delay(5_000, token);
+
+                // Restore road traffic after normal bridge session
                 ChangeCrossingTrafficLights(LightColor.Green);
             }
+
             IsHandlingPriority = false;
         }
 
