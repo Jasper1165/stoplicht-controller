@@ -299,9 +299,6 @@ namespace stoplicht_controller.Managers
 
         private async Task HandleBridgeSession(CancellationToken token)
         {
-            // clear previous conflicts
-            activeConflictDirections.Clear();
-
             // throw if cancelled
             token.ThrowIfCancellationRequested();
 
@@ -494,6 +491,8 @@ namespace stoplicht_controller.Managers
                 // Add this conflict direction ID to our tracking set
                 activeConflictDirections.Add(d.Id);
             }
+
+            SendBridgeStates();
         }
     }
 }
