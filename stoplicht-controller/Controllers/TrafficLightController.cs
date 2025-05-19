@@ -20,7 +20,7 @@ namespace stoplicht_controller.Managers
         private const int HIGH_PRIORITY_THRESHOLD = 6;
         private const double AGING_SCALE_SECONDS = 7;
 
-        // Nieuwe threshold voor file-detectie (ms)
+        // Threshold for traffic jam detection (ms)
         private const int JAM_THRESHOLD_MS = 10_000;
         private bool jamEngaged = false;
         private DateTime? jamDetectedAt = null;
@@ -45,6 +45,13 @@ namespace stoplicht_controller.Managers
         private PriorityVehicleManager? priorityManager;
         private bool isOverrideActive = false;
 
+        /// <summary>
+        /// Initializes a new instance of the TrafficLightController class.
+        /// </summary>
+        /// <param name="communicator">Communication manager for sending/receiving messages</param>
+        /// <param name="directions">List of all available traffic directions</param>
+        /// <param name="bridge">Bridge instance for monitoring bridge status</param>
+        /// <param name="priorityManager">Optional priority vehicle manager</param>
         public TrafficLightController(
             Communicator communicator,
             List<Direction> directions,
@@ -62,21 +69,30 @@ namespace stoplicht_controller.Managers
 
         // Expose for PriorityVehicleManager
         public HashSet<int> ProtectedBridgeCluster => GetProtectedBridgeCluster();
+
+        /// <summary>
+        /// Sets the priority vehicle manager for this controller
+        /// </summary>
         public void SetPriorityManager(PriorityVehicleManager mgr) => priorityManager = mgr;
 
+        /// <summary>
+        /// Initializes the last green times dictionary for all directions
+        /// </summary>
         public static void InitializeLastGreenTimes(IEnumerable<Direction> dirs)
         {
             foreach (var d in dirs)
                 lastGreenTimes[d.Id] = DateTime.Now;
         }
 
+        /// <summary>
+        /// Main traffic light control loop that runs continuously
+        /// </summary>
         public async Task TrafficLightCycleLoop(CancellationToken token)
         {
             _ = Task.Run(BridgeLoop, token);
             _ = Task.Run(PriorityLoop, token);
 
             Console.WriteLine("Traffic Light Controller started");
-
             if (directions.Any())
             {
                 Console.WriteLine($"Initial directions count: {directions.Count}");
@@ -86,12 +102,33 @@ namespace stoplicht_controller.Managers
 
             while (!token.IsCancellationRequested)
             {
-                ProcessSensorMessage();
-                UpdateTrafficLights();
-                await Task.Delay(500, token);
+                try
+                {
+                    ProcessSensorMessage();
+                    UpdateTrafficLights();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ERROR] TrafficLight update failure: {ex}");
+                    continue;
+                }
+
+                try
+                {
+                    await Task.Delay(500, token);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
             }
+
+            Console.WriteLine("Traffic Light Controller stopped");
         }
 
+        /// <summary>
+        /// Background loop for processing bridge-related functions
+        /// </summary>
         private async Task BridgeLoop()
         {
             while (true)
@@ -103,6 +140,9 @@ namespace stoplicht_controller.Managers
             }
         }
 
+        /// <summary>
+        /// Background loop for processing priority vehicle functions
+        /// </summary>
         private async Task PriorityLoop()
         {
             while (true)
@@ -113,22 +153,25 @@ namespace stoplicht_controller.Managers
             }
         }
 
+        /// <summary>
+        /// Updates the traffic light states based on traffic conditions
+        /// </summary>
         private void UpdateTrafficLights()
         {
             var now = DateTime.Now;
 
-            // 1) Threshold-gebaseerde jam-detectie
+            // 1) Threshold-based jam detection
             bool sensorJam = bridge.TrafficJamNearBridge;
 
             if (sensorJam)
             {
-                // reset “cleared”-timer
+                // Reset "cleared" timer
                 jamClearedAt = null;
 
-                // start “jam”-timer zodra we voor het eerst een auto meten
+                // Start "jam" timer when we first detect a vehicle
                 if (!jamDetectedAt.HasValue)
                     jamDetectedAt = now;
-                // pas na threshold pas écht jamEngaged = true
+                // Set jamEngaged to true only after threshold passed
                 else if (!jamEngaged
                          && (now - jamDetectedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
                 {
@@ -139,13 +182,13 @@ namespace stoplicht_controller.Managers
             }
             else
             {
-                // reset “jam”-timer
+                // Reset "jam" timer
                 jamDetectedAt = null;
 
-                // start “cleared”-timer zodra sensor weer vrij is
+                // Start "cleared" timer when sensor is free again
                 if (!jamClearedAt.HasValue)
                     jamClearedAt = now;
-                // pas na threshold pas écht jamEngaged = false
+                // Set jamEngaged to false only after threshold passed
                 else if (jamEngaged
                          && (now - jamClearedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
                 {
@@ -155,47 +198,32 @@ namespace stoplicht_controller.Managers
                 }
             }
 
-            // 2) Eenvoudige jam-handling: directe roodfase voor blokkade-rijbanen
-            if (jamEngaged)
-            {
-                foreach (var d in directions.Where(d => JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
-                    d.Color = LightColor.Red;
+            // 2) Get bridge cluster that should be protected
+            var protectedDirections = GetProtectedBridgeCluster();
 
-                currentGreenDirections.Clear();
-                currentOrangeDirections.Clear();
-
-                SendTrafficLightStates();
-                return;
-            }
-
-            var protect = GetProtectedBridgeCluster();
-
-            // 3) Normale verkeerslicht-flow als er geen jam is:
+            // 3) Check orange phase first - this has highest priority
             var sinceG = (now - lastSwitchTime).TotalMilliseconds;
             var sinceO = (now - lastOrangeTime).TotalMilliseconds;
 
-            // Oranje-fase - eerst controleren en afhandelen
             if (currentOrangeDirections.Any())
             {
                 if (sinceO >= ORANGE_DURATION)
                 {
-                    // Dezelfde patroon gebruiken als in ClearOverride
-                    // Oranje richtingen naar rood zetten
+                    // Orange phase complete, set to red
                     foreach (var orangeDir in currentOrangeDirections.ToList())
                     {
                         orangeDir.Color = LightColor.Red;
                         currentOrangeDirections.Remove(orangeDir);
                     }
 
-                    // Nu kunnen we naar een nieuwe groene set gaan
+                    // Now switch to a new green set
                     SwitchTrafficLights();
                     SendTrafficLightStates();
-                    // Console.WriteLine("Oranje fase voltooid, nieuwe groene set actief");
                 }
                 return;
             }
 
-            // Groen-fase (+ extra)
+            // 4) Process green phase
             if (currentGreenDirections.Any())
             {
                 int sumP = currentGreenDirections.Sum(GetEffectivePriority);
@@ -205,26 +233,29 @@ namespace stoplicht_controller.Managers
                         ? SHORT_GREEN_DURATION
                         : DEFAULT_GREEN_DURATION;
 
+                // Check if we need to end the green phase
                 if (sinceG >= dur)
                 {
-                    // Eerst de huidige groene richtingen naar oranje zetten
+                    // First set current green directions to orange
                     foreach (var greenDir in currentGreenDirections.ToList())
                     {
+                        // FIX: Don't directly set jam directions to red,
+                        // let them follow normal orange->red sequence
                         greenDir.Color = LightColor.Orange;
                         currentOrangeDirections.Add(greenDir);
                         currentGreenDirections.Remove(greenDir);
                     }
 
-                    // Oranje fase zichtbaar maken
+                    // Start orange phase
                     lastOrangeTime = now;
                     SendTrafficLightStates();
-                    // Console.WriteLine("Oranje fase gestart in UpdateTrafficLights");
 
-                    // De rood-fase wordt in de volgende tick afgehandeld
-                    // wanneer sinceO >= ORANGE_DURATION
+                    // Red phase will be handled in the next tick
+                    // when sinceO >= ORANGE_DURATION
                 }
                 else
                 {
+                    // Check if we can add more green directions
                     var extra = GetExtraGreenCandidates();
                     if (extra.Any())
                     {
@@ -237,32 +268,61 @@ namespace stoplicht_controller.Managers
                         lastSwitchTime = now;
                         SendTrafficLightStates();
                     }
+
+                    // Apply jam blocking only to green directions that aren't in orange phase
+                    if (jamEngaged)
+                    {
+                        bool statesChanged = false;
+
+                        // Only block jam directions that are currently green
+                        // Don't touch directions that are already in orange phase
+                        foreach (var d in currentGreenDirections.ToList())
+                        {
+                            if (JAM_BLOCK_DIRECTIONS.Contains(d.Id))
+                            {
+                                d.Color = LightColor.Orange;
+                                currentOrangeDirections.Add(d);
+                                currentGreenDirections.Remove(d);
+                                statesChanged = true;
+                            }
+                        }
+
+                        if (statesChanged)
+                        {
+                            lastOrangeTime = now;
+                            SendTrafficLightStates();
+                        }
+                    }
                 }
                 return;
             }
 
-            // Geen groene of oranje richtingen actief - nieuwe groene set
+            // 5) No green or orange directions active - switch to new green set
             SwitchTrafficLights();
             SendTrafficLightStates();
         }
 
+        /// <summary>
+        /// Override normal traffic light cycles to give priority to a specific direction
+        /// </summary>
+        /// <param name="dirId">Direction ID to prioritize</param>
         public async Task OverrideWithSingleGreen(int dirId)
         {
             var protect = GetProtectedBridgeCluster();
             if (protect.Contains(dirId)) return;
 
-            // Vind de prioriteitsrichting
+            // Find the priority direction
             var prioDir = directions.First(d => d.Id == dirId);
 
-            // Vind alle kruisende wegen (wegen die conflicteren met de prioriteitsrichting)
+            // Find all crossing directions (directions that conflict with the priority direction)
             var crossingDirections = directions
                 .Where(d => HasConflict(d, prioDir) && d.Color == LightColor.Green && !protect.Contains(d.Id))
                 .ToList();
 
-            // Als er kruisende wegen op groen staan, zet ze eerst op oranje
+            // If there are crossing directions on green, set them to orange first
             if (crossingDirections.Any())
             {
-                // Zet kruisende richtingen op oranje
+                // Set crossing directions to orange
                 foreach (var d in crossingDirections)
                 {
                     d.Color = LightColor.Orange;
@@ -273,24 +333,24 @@ namespace stoplicht_controller.Managers
                     }
                 }
 
-                // Oranje fase zichtbaar maken
+                // Start orange phase
                 lastOrangeTime = DateTime.Now;
                 SendTrafficLightStates();
-                Console.WriteLine("Oranje fase gestart voor kruisende wegen");
+                Console.WriteLine("Orange phase started for crossing directions");
 
                 try
                 {
-                    // Wachten tijdens oranje fase
+                    // Wait during orange phase
                     await Task.Delay(ORANGE_DURATION);
-                    Console.WriteLine($"Oranje fase voltooid na {ORANGE_DURATION}ms");
+                    Console.WriteLine($"Orange phase completed after {ORANGE_DURATION}ms");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Fout tijdens oranje fase: {ex.Message}");
+                    Console.WriteLine($"Error during orange phase: {ex.Message}");
                 }
             }
 
-            // Zet alle benodigde richtingen op rood
+            // Set all required directions to red
             foreach (var d in directions)
             {
                 if (!protect.Contains(d.Id))
@@ -303,9 +363,9 @@ namespace stoplicht_controller.Managers
                 }
             }
 
-            // Nu kunnen we de prioriteitsrichting op groen zetten
+            // Now we can set the priority direction to green
             prioDir.Color = LightColor.Green;
-            currentGreenDirections.Clear(); // Voor de zekerheid
+            currentGreenDirections.Clear(); // For safety
             currentOrangeDirections.Clear();
             currentGreenDirections.Add(prioDir);
 
@@ -314,15 +374,19 @@ namespace stoplicht_controller.Managers
             isOverrideActive = true;
 
             SendTrafficLightStates();
-            Console.WriteLine($"Prioriteitsrichting {dirId} op groen gezet");
+            Console.WriteLine($"Priority direction {dirId} set to green");
         }
+
+        /// <summary>
+        /// Clear the override state and return to normal traffic light cycles
+        /// </summary>
         public async Task ClearOverride()
         {
             if (!isOverrideActive) return;
 
             var protect = GetProtectedBridgeCluster();
 
-            // Eerst de huidige groene richtingen naar oranje zetten
+            // First set current green directions to orange
             foreach (var greenDir in currentGreenDirections.ToList())
             {
                 if (!protect.Contains(greenDir.Id))
@@ -333,23 +397,23 @@ namespace stoplicht_controller.Managers
                 }
             }
 
-            // Oranje fase zichtbaar maken
+            // Start orange phase
             lastOrangeTime = DateTime.Now;
             SendTrafficLightStates();
-            Console.WriteLine("Oranje fase gestart in ClearOverride");
+            Console.WriteLine("Orange phase started in ClearOverride");
 
             try
             {
-                // Wachten tijdens oranje fase
+                // Wait during orange phase
                 await Task.Delay(ORANGE_DURATION);
-                Console.WriteLine($"Oranje fase voltooid na {ORANGE_DURATION}ms");
+                Console.WriteLine($"Orange phase completed after {ORANGE_DURATION}ms");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Fout tijdens oranje fase: {ex.Message}");
+                Console.WriteLine($"Error during orange phase: {ex.Message}");
             }
 
-            // Oranje richtingen naar rood zetten
+            // Set orange directions to red
             foreach (var orangeDir in currentOrangeDirections.ToList())
             {
                 if (!protect.Contains(orangeDir.Id))
@@ -359,7 +423,7 @@ namespace stoplicht_controller.Managers
                 }
             }
 
-            // Zeker weten dat alle niet-beschermde richtingen rood zijn
+            // Make sure all non-protected directions are red
             foreach (var d in directions)
                 if (!protect.Contains(d.Id))
                     d.Color = LightColor.Red;
@@ -367,11 +431,14 @@ namespace stoplicht_controller.Managers
             isOverrideActive = false;
 
             SendTrafficLightStates();
-            Console.WriteLine("Override opgeheven, alle lichten op rood gezet");
+            Console.WriteLine("Override cleared, all lights set to red");
         }
 
         // ========== HELPERS ==========
 
+        /// <summary>
+        /// Gets the cluster of protected directions related to the bridge
+        /// </summary>
         private HashSet<int> GetProtectedBridgeCluster()
         {
             var cluster = new HashSet<int>(BRIDGE_DIRECTIONS);
@@ -385,6 +452,9 @@ namespace stoplicht_controller.Managers
             return cluster;
         }
 
+        /// <summary>
+        /// Gets additional directions that can be set to green without conflicts
+        /// </summary>
         private List<Direction> GetExtraGreenCandidates()
         {
             var bridgeSpecific = bridgeController.GetBridgeIntersectionSet();
@@ -393,7 +463,6 @@ namespace stoplicht_controller.Managers
                 .Where(d =>
                     GetPriority(d) > 0 &&
                     !currentGreenDirections.Contains(d) &&
-                    // gebruik jamEngaged ipv sensor
                     !(bridgeSpecific.Contains(d.Id) && IsBridgeOpen()) &&
                     !(jamEngaged && JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
                 .OrderByDescending(GetEffectivePriority)
@@ -410,12 +479,18 @@ namespace stoplicht_controller.Managers
             return pick;
         }
 
+        /// <summary>
+        /// Checks if the bridge is currently open
+        /// </summary>
         private bool IsBridgeOpen()
         {
             return bridgeController.CurrentBridgeState != "dicht" &&
                    bridgeController.CurrentBridgeState != "dicht_en_geblokkeerd";
         }
 
+        /// <summary>
+        /// Switches to a new set of green traffic lights based on priorities
+        /// </summary>
         private void SwitchTrafficLights()
         {
             if (isOverrideActive || priorityManager?.HasActivePrio1 == true)
@@ -451,6 +526,9 @@ namespace stoplicht_controller.Managers
             lastSwitchTime = DateTime.Now;
         }
 
+        /// <summary>
+        /// Sets all green lights to orange
+        /// </summary>
         private void SetLightsToOrange()
         {
             currentOrangeDirections = new List<Direction>(currentGreenDirections);
@@ -459,6 +537,9 @@ namespace stoplicht_controller.Managers
             currentGreenDirections.Clear();
         }
 
+        /// <summary>
+        /// Sets all orange lights to red
+        /// </summary>
         private void SetLightsToRed()
         {
             foreach (var d in currentOrangeDirections)
@@ -466,9 +547,15 @@ namespace stoplicht_controller.Managers
             currentOrangeDirections.Clear();
         }
 
+        /// <summary>
+        /// Checks if two directions have a conflict (crossing paths)
+        /// </summary>
         private static bool HasConflict(Direction a, Direction b)
             => a.Intersections.Contains(b.Id) || b.Intersections.Contains(a.Id);
 
+        /// <summary>
+        /// Gets the base priority for a direction based on sensor data
+        /// </summary>
         private int GetPriority(Direction d)
         {
             int p = 0;
@@ -481,6 +568,9 @@ namespace stoplicht_controller.Managers
             return p;
         }
 
+        /// <summary>
+        /// Gets the effective priority for a direction based on sensor data, aging, and priority vehicles
+        /// </summary>
         private int GetEffectivePriority(Direction d)
         {
             int baseP = GetPriority(d);
@@ -517,6 +607,9 @@ namespace stoplicht_controller.Managers
                 : baseP + aging;
         }
 
+        /// <summary>
+        /// Processes sensor data from the communicator
+        /// </summary>
         private void ProcessSensorMessage()
         {
             if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;
@@ -544,6 +637,9 @@ namespace stoplicht_controller.Managers
             catch { }
         }
 
+        /// <summary>
+        /// Sends the current traffic light states to the communicator
+        /// </summary>
         private void SendTrafficLightStates()
         {
             if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;

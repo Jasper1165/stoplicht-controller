@@ -164,13 +164,13 @@ namespace stoplicht_controller.Managers
         // ───────────────────────────────────────────────────────────────
         public async Task UpdateAsync()
         {
-            if (CheckForPriorityVehicle())
-            {
-                var priorityToken = bridgeCts.Token;
+            // if (CheckForPriorityVehicle())
+            // {
+            //     var priorityToken = bridgeCts.Token;
 
-                await HandlePriorityVehicleAsync(priorityToken);
-                return;
-            }
+            //     await HandlePriorityVehicleAsync(priorityToken);
+            //     return;
+            // }
 
             ProcessBridgeSensorData();
             ResetBridgeCycle();
