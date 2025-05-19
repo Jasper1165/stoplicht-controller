@@ -135,6 +135,8 @@ namespace stoplicht_controller.Managers
             var direction = GetDirectionFromLane(vehicle.Lane);
             if (direction == null) return;
 
+            if (direction.Id == 71 || direction.Id == 72) return;
+
             trafficLightController.OverrideWithSingleGreen(direction.Id);
             activePrio1 = vehicle;
         }

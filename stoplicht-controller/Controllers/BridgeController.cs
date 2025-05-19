@@ -164,13 +164,13 @@ namespace stoplicht_controller.Managers
         // ───────────────────────────────────────────────────────────────
         public async Task UpdateAsync()
         {
-            // if (CheckForPriorityVehicle())
-            // {
-            //     var priorityToken = bridgeCts.Token;
+            if (CheckForPriorityVehicle())
+            {
+                var priorityToken = bridgeCts.Token;
 
-            //     await HandlePriorityVehicleAsync(priorityToken);
-            //     return;
-            // }
+                await HandlePriorityVehicleAsync(priorityToken);
+                return;
+            }
 
             ProcessBridgeSensorData();
             ResetBridgeCycle();
@@ -247,62 +247,81 @@ namespace stoplicht_controller.Managers
         {
             IsHandlingPriority = true;
             Task running = null;
-            lock (bridgeLock)
+
+            try
             {
-                if (bridgeTask != null && !bridgeTask.IsCompleted)
-                {
-                    bridgeCts?.Cancel();
-                    running = bridgeTask;
-                }
-            }
-            if (running != null)
-                await Task.WhenAny(running, Task.Delay(5_000));
+                // Wacht tot de vorige taak is gestopt (met een maximum van 5 seconden)
+                if (running != null)
+                    await Task.WhenAny(running, Task.Delay(5_000));
 
-            // Controleer of de brug open of dicht staat
-            ProcessBridgeSensorData();
-            bool bridgeIsClosed = physicalBridgeState == "dicht";
+                // Vergewis ons van de huidige brugstatus
+                ProcessBridgeSensorData();
+                bool bridgeIsClosed = physicalBridgeState == "dicht";
 
-            var dirA = directions.First(d => d.Id == bridgeDirectionA);
-            var dirB = directions.First(d => d.Id == bridgeDirectionB);
-            dirA.Color = LightColor.Red;
-            dirB.Color = LightColor.Red;
-            SendBridgeStates();
-
-
-            if (bridgeIsClosed)
-            {
-                // Als de brug dicht is, zet alleen de verkeerslichten op groen
-                Console.WriteLine("Prioriteitsvoertuig gedetecteerd met gesloten brug - verkeerslichten op groen");
-                await Task.Delay(2_000);
-
-                // open barriers
-                await Task.Delay(5_000);
-                // set lights to green
-                ChangeCrossingTrafficLights(LightColor.Green);
-            }
-            else
-            {
-                // Als de brug open staat, volg het oorspronkelijke proces
-                Console.WriteLine("Prioriteitsvoertuig gedetecteerd met open brug - wacht tot brug sluit");
-
-                Console.WriteLine("Waiting until no vessel under bridge...");
-                await WaitUntilNoVesselUnderBridge(token);
-
-                activeConflictDirections.Clear();
-                // close bridge
-                currentBridgeState = "rood";
+                // Zet altijd beide richtingen op rood als eerste veiligheidsmaatregel
+                var dirA = directions.First(d => d.Id == bridgeDirectionA);
+                var dirB = directions.First(d => d.Id == bridgeDirectionB);
+                dirA.Color = LightColor.Red;
+                dirB.Color = LightColor.Red;
                 SendBridgeStates();
 
-                // wait for the bridge to close
-                await WaitForPhysicalBridgeState("dicht", token);
 
-                // close the barriers
-                await Task.Delay(5_000, token);
+                if (bridgeIsClosed)
+                {
+                    // ---- SITUATIE: BRUG IS GESLOTEN ----
+                    Console.WriteLine("Prioriteitsvoertuig verwerken met gesloten brug");
 
-                // Restore road traffic after normal bridge session
-                ChangeCrossingTrafficLights(LightColor.Green);
+                    activeConflictDirections.Clear();
+
+                    currentBridgeState = "rood";
+                    SendBridgeStates();
+
+                    await Task.Delay(6_000, token);
+
+                    // Open de slagbomen als die er zijn
+                    Console.WriteLine("Slagbomen openen voor prioriteitsvoertuig...");
+                    await Task.Delay(6_000, token);
+
+                    // Zet kruisende verkeerslichten op groen
+                    Console.WriteLine("Verkeerslichten op groen zetten voor prioriteitsvoertuig");
+                    ChangeCrossingTrafficLights(LightColor.Green);
+                }
+                else
+                {
+                    // ---- SITUATIE: BRUG IS OPEN ----
+                    Console.WriteLine("Prioriteitsvoertuig verwerken met open brug");
+
+                    // Wacht tot er geen schip meer onder de brug is
+                    Console.WriteLine("Wachten tot er geen schepen meer onder de brug zijn...");
+                    await WaitUntilNoVesselUnderBridge(token);
+
+                    // Maak actieve conflictrichtingen leeg voor een schone start
+                    activeConflictDirections.Clear();
+
+                    // Sluit de brug (verander status naar rood)
+                    currentBridgeState = "rood";
+                    SendBridgeStates();
+
+                    // Wacht tot de brug fysiek gesloten is
+                    Console.WriteLine("Wachten tot de brug fysiek gesloten is...");
+                    await WaitForPhysicalBridgeState("dicht", token);
+
+                    // Open de slagbomen als die er zijn
+                    Console.WriteLine("Slagbomen openen voor prioriteitsvoertuig...");
+                    await Task.Delay(6_000, token);
+
+                    // Zet kruisende verkeerslichten op groen
+                    Console.WriteLine("Verkeerslichten op groen zetten voor prioriteitsvoertuig");
+                    ChangeCrossingTrafficLights(LightColor.Green);
+                }
+
+                // Wacht een redelijke tijd voor prioriteitsvoertuig om te passeren
+                await Task.Delay(10_000, token);
             }
-            IsHandlingPriority = false;
+            finally
+            {
+                IsHandlingPriority = false;
+            }
         }
 
         private async Task HandleBridgeSession(CancellationToken token)
@@ -322,7 +341,7 @@ namespace stoplicht_controller.Managers
             ChangeCrossingTrafficLights(LightColor.Red);
 
             // wait
-            await Task.Delay(2_000, token);
+            await Task.Delay(3_000, token);
 
             // wait for vehicle on bridge to pass
             Console.WriteLine("Waiting until no vehicle on the bridge...");
