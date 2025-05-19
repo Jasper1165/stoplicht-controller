@@ -211,7 +211,7 @@ namespace stoplicht_controller.Managers
                     // Eerst de huidige groene richtingen naar oranje zetten
                     foreach (var greenDir in currentGreenDirections.ToList())
                     {
-                        if (protect.Contains(orangeDir.Id)) continue;
+                        if (protect.Contains(greenDir.Id)) continue;
                         greenDir.Color = LightColor.Orange;
                         currentOrangeDirections.Add(greenDir);
                         currentGreenDirections.Remove(greenDir);
