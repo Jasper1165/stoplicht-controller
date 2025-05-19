@@ -231,6 +231,7 @@ namespace stoplicht_controller.Managers
             foreach (var d in directions)
                 if (!protect.Contains(d.Id))
                     d.Color = LightColor.Red;
+
             currentGreenDirections.Clear();
             currentOrangeDirections.Clear();
 
@@ -241,28 +242,52 @@ namespace stoplicht_controller.Managers
             lastSwitchTime = DateTime.Now;
             lastOrangeTime = DateTime.Now;
             isOverrideActive = true;
+
             SendTrafficLightStates();
         }
 
         public async Task ClearOverride()
         {
             if (!isOverrideActive) return;
-            var protect = GetProtectedBridgeCluster();
-            foreach (var d in directions)
-                if (!protect.Contains(d.Id))
-                    d.Color = LightColor.Orange;
 
+            var protect = GetProtectedBridgeCluster();
+
+            // Eerst de huidige groene richtingen naar oranje zetten
+            foreach (var greenDir in currentGreenDirections.ToList())
+            {
+                if (!protect.Contains(greenDir.Id))
+                {
+                    greenDir.Color = LightColor.Orange;
+                    currentOrangeDirections.Add(greenDir);
+                    currentGreenDirections.Remove(greenDir);
+                }
+            }
+
+            // Update sturen na wijziging naar oranje
+            SendTrafficLightStates();
+
+            // Wachten tijdens oranje fase
             await Task.Delay(ORANGE_DURATION);
 
+            // Oranje richtingen naar rood zetten
+            foreach (var orangeDir in currentOrangeDirections.ToList())
+            {
+                if (!protect.Contains(orangeDir.Id))
+                {
+                    orangeDir.Color = LightColor.Red;
+                    currentOrangeDirections.Remove(orangeDir);
+                }
+            }
+
+            // Zeker weten dat alle niet-beschermde richtingen rood zijn
             foreach (var d in directions)
                 if (!protect.Contains(d.Id))
                     d.Color = LightColor.Red;
-            currentGreenDirections.Clear();
-            currentOrangeDirections.Clear();
+
             isOverrideActive = false;
+
             SendTrafficLightStates();
         }
-
         // ========== HELPERS ==========
 
         private HashSet<int> GetProtectedBridgeCluster()
