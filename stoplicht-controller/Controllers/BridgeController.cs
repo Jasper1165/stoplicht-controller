@@ -341,7 +341,7 @@ namespace stoplicht_controller.Managers
             ChangeCrossingTrafficLights(LightColor.Red);
 
             // wait
-            await Task.Delay(3_000, token);
+            await Task.Delay(5_000, token);
 
             // wait for vehicle on bridge to pass
             Console.WriteLine("Waiting until no vehicle on the bridge...");
