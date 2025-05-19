@@ -74,7 +74,7 @@ namespace stoplicht_controller.Managers
             SendBridgeStates();
 
             await Task.Delay(approachDelayMs);
-            await WaitForPhysicalBridgeState("dicht", CancellationToken.None);
+            await WaitForPhysicalBridgeState("dicht");
             ChangeCrossingTrafficLights(LightColor.Green);
         }
 
@@ -390,7 +390,6 @@ namespace stoplicht_controller.Managers
             int clearCount = 0, required = 4;
             while (true)
             {
-                token.ThrowIfCancellationRequested();
                 ProcessBridgeSensorData();
                 if (!bridge.VesselUnderBridge)
                 {
@@ -398,18 +397,17 @@ namespace stoplicht_controller.Managers
                 }
                 else clearCount = 0;
                 if (++retries >= max) break;
-                await Task.Delay(SAFETY_CHECK_INTERVAL, token);
+                await Task.Delay(SAFETY_CHECK_INTERVAL);
             }
         }
 
-        private async Task WaitForPhysicalBridgeState(string target, CancellationToken token)
+        private async Task WaitForPhysicalBridgeState(string target)
         {
             int retries = 0, max = 240;
             while (physicalBridgeState != target)
             {
-                token.ThrowIfCancellationRequested();
                 ProcessBridgeSensorData();
-                await Task.Delay(SAFETY_CHECK_INTERVAL, token);
+                await Task.Delay(SAFETY_CHECK_INTERVAL);
                 if (++retries >= max) break;
             }
         }
