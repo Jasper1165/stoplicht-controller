@@ -74,7 +74,7 @@ namespace stoplicht_controller.Managers
             SendBridgeStates();
 
             await Task.Delay(approachDelayMs);
-            await WaitForPhysicalBridgeState("dicht");
+            await WaitForPhysicalBridgeState("dicht", CancellationToken.None);
             ChangeCrossingTrafficLights(LightColor.Green);
         }
 
@@ -284,7 +284,7 @@ namespace stoplicht_controller.Managers
                 Console.WriteLine("Prioriteitsvoertuig gedetecteerd met open brug - wacht tot brug sluit");
 
                 Console.WriteLine("Waiting until no vessel under bridge...");
-                await WaitUntilNoVesselUnderBridge();
+                await WaitUntilNoVesselUnderBridge(CancelationToken.None);
 
                 activeConflictDirections.Clear();
                 // close bridge
@@ -292,10 +292,10 @@ namespace stoplicht_controller.Managers
                 SendBridgeStates();
 
                 // wait for the bridge to close
-                await WaitForPhysicalBridgeState("dicht");
+                await WaitForPhysicalBridgeState("dicht", CancelationToken.None);
 
                 // close the barriers
-                await Task.Delay(5_000);
+                await Task.Delay(5_000, token);
 
                 // Restore road traffic after normal bridge session
                 ChangeCrossingTrafficLights(LightColor.Green);
@@ -332,7 +332,7 @@ namespace stoplicht_controller.Managers
             currentBridgeState = "groen";
             SendBridgeStates();
 
-            await WaitForPhysicalBridgeState("open");
+            await WaitForPhysicalBridgeState("open", token);
             // lets boats pass
             if (sideA)
             {
@@ -350,7 +350,7 @@ namespace stoplicht_controller.Managers
                 await LetBoatsPass(bridgeDirectionB, token);
 
             Console.WriteLine("Waiting until no vessel under bridge...");
-            await WaitUntilNoVesselUnderBridge();
+            await WaitUntilNoVesselUnderBridge(token);
 
             activeConflictDirections.Clear();
             // close bridge
@@ -358,7 +358,7 @@ namespace stoplicht_controller.Managers
             SendBridgeStates();
 
             // wait for the bridge to close
-            await WaitForPhysicalBridgeState("dicht");
+            await WaitForPhysicalBridgeState("dicht", token);
 
             // close the barriers
             await Task.Delay(5_000, token);
@@ -384,12 +384,13 @@ namespace stoplicht_controller.Managers
             }
         }
 
-        private async Task WaitUntilNoVesselUnderBridge()
+        private async Task WaitUntilNoVesselUnderBridge(CancellationToken token)
         {
             int retries = 0, max = 180;
             int clearCount = 0, required = 4;
             while (true)
             {
+                token.ThrowIfCancellationRequested();
                 ProcessBridgeSensorData();
                 if (!bridge.VesselUnderBridge)
                 {
@@ -397,17 +398,18 @@ namespace stoplicht_controller.Managers
                 }
                 else clearCount = 0;
                 if (++retries >= max) break;
-                await Task.Delay(SAFETY_CHECK_INTERVAL);
+                await Task.Delay(SAFETY_CHECK_INTERVAL, token);
             }
         }
 
-        private async Task WaitForPhysicalBridgeState(string target)
+        private async Task WaitForPhysicalBridgeState(string target, CancellationToken token)
         {
             int retries = 0, max = 240;
             while (physicalBridgeState != target)
             {
+                token.ThrowIfCancellationRequested();
                 ProcessBridgeSensorData();
-                await Task.Delay(SAFETY_CHECK_INTERVAL);
+                await Task.Delay(SAFETY_CHECK_INTERVAL, token);
                 if (++retries >= max) break;
             }
         }
