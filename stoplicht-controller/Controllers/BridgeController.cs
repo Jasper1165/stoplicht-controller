@@ -164,11 +164,11 @@ namespace stoplicht_controller.Managers
         // ───────────────────────────────────────────────────────────────
         public async Task UpdateAsync()
         {
-            if (CheckForPriorityVehicle())
-            {
-                await HandlePriorityVehicleAsync();
-                return;
-            }
+            // if (CheckForPriorityVehicle())
+            // {
+            //     await HandlePriorityVehicleAsync();
+            //     return;
+            // }
 
             ProcessBridgeSensorData();
             ResetBridgeCycle();
