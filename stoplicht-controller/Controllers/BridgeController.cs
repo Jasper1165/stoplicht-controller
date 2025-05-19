@@ -287,7 +287,7 @@ namespace stoplicht_controller.Managers
                 // wait
                 await Task.Delay(5_000);
 
-                activeConflictDirections.Clear();
+                // activeConflictDirections.Clear();
                 currentBridgeState = "rood";
                 SendBridgeStates();
 
