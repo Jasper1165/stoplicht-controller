@@ -263,11 +263,21 @@ namespace stoplicht_controller.Managers
                 }
             }
 
-            // Update sturen na wijziging naar oranje
+            // Oranje fase zichtbaar maken
+            lastOrangeTime = DateTime.Now;
             SendTrafficLightStates();
+            Console.WriteLine("Oranje fase gestart in ClearOverride");
 
-            // Wachten tijdens oranje fase
-            await Task.Delay(ORANGE_DURATION);
+            try
+            {
+                // Wachten tijdens oranje fase
+                await Task.Delay(ORANGE_DURATION);
+                Console.WriteLine($"Oranje fase voltooid na {ORANGE_DURATION}ms");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Fout tijdens oranje fase: {ex.Message}");
+            }
 
             // Oranje richtingen naar rood zetten
             foreach (var orangeDir in currentOrangeDirections.ToList())
@@ -287,7 +297,9 @@ namespace stoplicht_controller.Managers
             isOverrideActive = false;
 
             SendTrafficLightStates();
+            Console.WriteLine("Override opgeheven, alle lichten op rood gezet");
         }
+
         // ========== HELPERS ==========
 
         private HashSet<int> GetProtectedBridgeCluster()
