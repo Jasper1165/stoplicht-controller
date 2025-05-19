@@ -284,7 +284,7 @@ namespace stoplicht_controller.Managers
                 Console.WriteLine("Prioriteitsvoertuig gedetecteerd met open brug - wacht tot brug sluit");
 
                 Console.WriteLine("Waiting until no vessel under bridge...");
-                await WaitUntilNoVesselUnderBridge(token);
+                await WaitUntilNoVesselUnderBridge();
 
                 activeConflictDirections.Clear();
                 // close bridge
@@ -292,15 +292,14 @@ namespace stoplicht_controller.Managers
                 SendBridgeStates();
 
                 // wait for the bridge to close
-                await WaitForPhysicalBridgeState("dicht", token);
+                await WaitForPhysicalBridgeState("dicht");
 
                 // close the barriers
-                await Task.Delay(5_000, token);
+                await Task.Delay(5_000);
 
                 // Restore road traffic after normal bridge session
                 ChangeCrossingTrafficLights(LightColor.Green);
             }
-
             IsHandlingPriority = false;
         }
 
@@ -333,7 +332,7 @@ namespace stoplicht_controller.Managers
             currentBridgeState = "groen";
             SendBridgeStates();
 
-            await WaitForPhysicalBridgeState("open", token);
+            await WaitForPhysicalBridgeState("open");
             // lets boats pass
             if (sideA)
             {
@@ -351,7 +350,7 @@ namespace stoplicht_controller.Managers
                 await LetBoatsPass(bridgeDirectionB, token);
 
             Console.WriteLine("Waiting until no vessel under bridge...");
-            await WaitUntilNoVesselUnderBridge(token);
+            await WaitUntilNoVesselUnderBridge();
 
             activeConflictDirections.Clear();
             // close bridge
@@ -359,7 +358,7 @@ namespace stoplicht_controller.Managers
             SendBridgeStates();
 
             // wait for the bridge to close
-            await WaitForPhysicalBridgeState("dicht", token);
+            await WaitForPhysicalBridgeState("dicht");
 
             // close the barriers
             await Task.Delay(5_000, token);
@@ -385,7 +384,7 @@ namespace stoplicht_controller.Managers
             }
         }
 
-        private async Task WaitUntilNoVesselUnderBridge(CancellationToken token)
+        private async Task WaitUntilNoVesselUnderBridge()
         {
             int retries = 0, max = 180;
             int clearCount = 0, required = 4;
