@@ -120,66 +120,75 @@ namespace stoplicht_controller.Managers
             // 1) Threshold-gebaseerde jam-detectie
             bool sensorJam = bridge.TrafficJamNearBridge;
 
-            // if (sensorJam)
-            // {
-            //     // reset “cleared”-timer
-            //     jamClearedAt = null;
+            if (sensorJam)
+            {
+                // reset “cleared”-timer
+                jamClearedAt = null;
 
-            //     // start “jam”-timer zodra we voor het eerst een auto meten
-            //     if (!jamDetectedAt.HasValue)
-            //         jamDetectedAt = now;
-            //     // pas na threshold pas écht jamEngaged = true
-            //     else if (!jamEngaged
-            //              && (now - jamDetectedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
-            //     {
-            //         jamEngaged = true;
-            //         jamDetectedAt = null;
-            //         Console.WriteLine(">>> Jam engaged after threshold");
-            //     }
-            // }
-            // else
-            // {
-            //     // reset “jam”-timer
-            //     jamDetectedAt = null;
+                // start “jam”-timer zodra we voor het eerst een auto meten
+                if (!jamDetectedAt.HasValue)
+                    jamDetectedAt = now;
+                // pas na threshold pas écht jamEngaged = true
+                else if (!jamEngaged
+                         && (now - jamDetectedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
+                {
+                    jamEngaged = true;
+                    jamDetectedAt = null;
+                    Console.WriteLine(">>> Jam engaged after threshold");
+                }
+            }
+            else
+            {
+                // reset “jam”-timer
+                jamDetectedAt = null;
 
-            //     // start “cleared”-timer zodra sensor weer vrij is
-            //     if (!jamClearedAt.HasValue)
-            //         jamClearedAt = now;
-            //     // pas na threshold pas écht jamEngaged = false
-            //     else if (jamEngaged
-            //              && (now - jamClearedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
-            //     {
-            //         jamEngaged = false;
-            //         jamClearedAt = null;
-            //         Console.WriteLine(">>> Jam cleared after threshold");
-            //     }
-            // }
+                // start “cleared”-timer zodra sensor weer vrij is
+                if (!jamClearedAt.HasValue)
+                    jamClearedAt = now;
+                // pas na threshold pas écht jamEngaged = false
+                else if (jamEngaged
+                         && (now - jamClearedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
+                {
+                    jamEngaged = false;
+                    jamClearedAt = null;
+                    Console.WriteLine(">>> Jam cleared after threshold");
+                }
+            }
 
-            // // 2) Eenvoudige jam-handling: directe roodfase voor blokkade-rijbanen
-            // if (jamEngaged)
-            // {
-            //     foreach (var d in directions.Where(d => JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
-            //         d.Color = LightColor.Red;
+            // 2) Eenvoudige jam-handling: directe roodfase voor blokkade-rijbanen
+            if (jamEngaged)
+            {
+                foreach (var d in directions.Where(d => JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
+                    d.Color = LightColor.Red;
 
-            //     currentGreenDirections.Clear();
-            //     currentOrangeDirections.Clear();
+                currentGreenDirections.Clear();
+                currentOrangeDirections.Clear();
 
-            //     SendTrafficLightStates();
-            //     return;
-            // }
+                SendTrafficLightStates();
+                return;
+            }
 
             // 3) Normale verkeerslicht-flow als er geen jam is:
             var sinceG = (now - lastSwitchTime).TotalMilliseconds;
             var sinceO = (now - lastOrangeTime).TotalMilliseconds;
 
-            // Oranje-fase
+            // Oranje-fase - eerst controleren en afhandelen
             if (currentOrangeDirections.Any())
             {
                 if (sinceO >= ORANGE_DURATION)
                 {
-                    SetLightsToRed();
+                    // Dezelfde patroon gebruiken als in ClearOverride
+                    // Oranje richtingen naar rood zetten
+                    foreach (var orangeDir in currentOrangeDirections.ToList())
+                    {
+                        orangeDir.Color = LightColor.Red;
+                        currentOrangeDirections.Remove(orangeDir);
+                    }
+
+                    // Nu kunnen we naar een nieuwe groene set gaan
                     SwitchTrafficLights();
                     SendTrafficLightStates();
+                    // Console.WriteLine("Oranje fase voltooid, nieuwe groene set actief");
                 }
                 return;
             }
@@ -196,9 +205,21 @@ namespace stoplicht_controller.Managers
 
                 if (sinceG >= dur)
                 {
-                    SetLightsToOrange();
+                    // Eerst de huidige groene richtingen naar oranje zetten
+                    foreach (var greenDir in currentGreenDirections.ToList())
+                    {
+                        greenDir.Color = LightColor.Orange;
+                        currentOrangeDirections.Add(greenDir);
+                        currentGreenDirections.Remove(greenDir);
+                    }
+
+                    // Oranje fase zichtbaar maken
                     lastOrangeTime = now;
                     SendTrafficLightStates();
+                    // Console.WriteLine("Oranje fase gestart in UpdateTrafficLights");
+
+                    // De rood-fase wordt in de volgende tick afgehandeld
+                    // wanneer sinceO >= ORANGE_DURATION
                 }
                 else
                 {
@@ -218,7 +239,7 @@ namespace stoplicht_controller.Managers
                 return;
             }
 
-            // Nieuwe groene set
+            // Geen groene of oranje richtingen actief - nieuwe groene set
             SwitchTrafficLights();
             SendTrafficLightStates();
         }
