@@ -168,6 +168,8 @@ namespace stoplicht_controller.Managers
                 return;
             }
 
+            var protect = GetProtectedBridgeCluster();
+
             // 3) Normale verkeerslicht-flow als er geen jam is:
             var sinceG = (now - lastSwitchTime).TotalMilliseconds;
             var sinceO = (now - lastOrangeTime).TotalMilliseconds;
@@ -181,6 +183,7 @@ namespace stoplicht_controller.Managers
                     // Oranje richtingen naar rood zetten
                     foreach (var orangeDir in currentOrangeDirections.ToList())
                     {
+                        if (protect.Contains(orangeDir.Id)) continue;
                         orangeDir.Color = LightColor.Red;
                         currentOrangeDirections.Remove(orangeDir);
                     }
@@ -208,6 +211,7 @@ namespace stoplicht_controller.Managers
                     // Eerst de huidige groene richtingen naar oranje zetten
                     foreach (var greenDir in currentGreenDirections.ToList())
                     {
+                        if (protect.Contains(orangeDir.Id)) continue;
                         greenDir.Color = LightColor.Orange;
                         currentOrangeDirections.Add(greenDir);
                         currentGreenDirections.Remove(greenDir);
