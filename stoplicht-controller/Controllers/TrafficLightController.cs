@@ -13,7 +13,7 @@ namespace stoplicht_controller.Managers
     public class TrafficLightController
     {
         // ========= CONFIG =========
-        private const int ORANGE_DURATION = 3_500;
+        private const int ORANGE_DURATION = 4_500;
         private const int DEFAULT_GREEN_DURATION = 10_000;
         private const int SHORT_GREEN_DURATION = 10_000;
         private const int PRIORITY_THRESHOLD = 3;
@@ -120,53 +120,53 @@ namespace stoplicht_controller.Managers
             // 1) Threshold-gebaseerde jam-detectie
             bool sensorJam = bridge.TrafficJamNearBridge;
 
-            if (sensorJam)
-            {
-                // reset “cleared”-timer
-                jamClearedAt = null;
+            // if (sensorJam)
+            // {
+            //     // reset “cleared”-timer
+            //     jamClearedAt = null;
 
-                // start “jam”-timer zodra we voor het eerst een auto meten
-                if (!jamDetectedAt.HasValue)
-                    jamDetectedAt = now;
-                // pas na threshold pas écht jamEngaged = true
-                else if (!jamEngaged
-                         && (now - jamDetectedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
-                {
-                    jamEngaged = true;
-                    jamDetectedAt = null;
-                    Console.WriteLine(">>> Jam engaged after threshold");
-                }
-            }
-            else
-            {
-                // reset “jam”-timer
-                jamDetectedAt = null;
+            //     // start “jam”-timer zodra we voor het eerst een auto meten
+            //     if (!jamDetectedAt.HasValue)
+            //         jamDetectedAt = now;
+            //     // pas na threshold pas écht jamEngaged = true
+            //     else if (!jamEngaged
+            //              && (now - jamDetectedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
+            //     {
+            //         jamEngaged = true;
+            //         jamDetectedAt = null;
+            //         Console.WriteLine(">>> Jam engaged after threshold");
+            //     }
+            // }
+            // else
+            // {
+            //     // reset “jam”-timer
+            //     jamDetectedAt = null;
 
-                // start “cleared”-timer zodra sensor weer vrij is
-                if (!jamClearedAt.HasValue)
-                    jamClearedAt = now;
-                // pas na threshold pas écht jamEngaged = false
-                else if (jamEngaged
-                         && (now - jamClearedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
-                {
-                    jamEngaged = false;
-                    jamClearedAt = null;
-                    Console.WriteLine(">>> Jam cleared after threshold");
-                }
-            }
+            //     // start “cleared”-timer zodra sensor weer vrij is
+            //     if (!jamClearedAt.HasValue)
+            //         jamClearedAt = now;
+            //     // pas na threshold pas écht jamEngaged = false
+            //     else if (jamEngaged
+            //              && (now - jamClearedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
+            //     {
+            //         jamEngaged = false;
+            //         jamClearedAt = null;
+            //         Console.WriteLine(">>> Jam cleared after threshold");
+            //     }
+            // }
 
-            // 2) Eenvoudige jam-handling: directe roodfase voor blokkade-rijbanen
-            if (jamEngaged)
-            {
-                foreach (var d in directions.Where(d => JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
-                    d.Color = LightColor.Red;
+            // // 2) Eenvoudige jam-handling: directe roodfase voor blokkade-rijbanen
+            // if (jamEngaged)
+            // {
+            //     foreach (var d in directions.Where(d => JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
+            //         d.Color = LightColor.Red;
 
-                currentGreenDirections.Clear();
-                currentOrangeDirections.Clear();
+            //     currentGreenDirections.Clear();
+            //     currentOrangeDirections.Clear();
 
-                SendTrafficLightStates();
-                return;
-            }
+            //     SendTrafficLightStates();
+            //     return;
+            // }
 
             // 3) Normale verkeerslicht-flow als er geen jam is:
             var sinceG = (now - lastSwitchTime).TotalMilliseconds;
