@@ -223,20 +223,60 @@ namespace stoplicht_controller.Managers
             SendTrafficLightStates();
         }
 
-        public void OverrideWithSingleGreen(int dirId)
+        public async Task OverrideWithSingleGreen(int dirId)
         {
             var protect = GetProtectedBridgeCluster();
             if (protect.Contains(dirId)) return;
 
-            foreach (var d in directions)
-                if (!protect.Contains(d.Id))
-                    d.Color = LightColor.Red;
-
-            currentGreenDirections.Clear();
-            currentOrangeDirections.Clear();
-
+            // Vind de prioriteitsrichting
             var prioDir = directions.First(d => d.Id == dirId);
+
+            // Vind alle kruisende wegen (wegen die conflicteren met de prioriteitsrichting)
+            var crossingDirections = directions
+                .Where(d => HasConflict(d, prioDir) && d.Color == LightColor.Green && !protect.Contains(d.Id))
+                .ToList();
+
+            // Als er kruisende wegen op groen staan, zet ze eerst op oranje
+            if (crossingDirections.Any())
+            {
+                // Console.WriteLine($"Oranje fase gestart voor {crossingDirections.Count} kruisende wegen voordat prioriteitsrichting {dirId} op groen gaat");
+
+                // Zet kruisende richtingen op oranje
+                foreach (var d in crossingDirections)
+                {
+                    d.Color = LightColor.Orange;
+                    if (currentGreenDirections.Contains(d))
+                    {
+                        currentGreenDirections.Remove(d);
+                        currentOrangeDirections.Add(d);
+                    }
+                }
+
+                // Update sturen na wijziging naar oranje
+                SendTrafficLightStates();
+
+                // Wachten tijdens oranje fase
+                await Task.Delay(ORANGE_DURATION);
+                // Console.WriteLine($"Oranje fase voltooid na {ORANGE_DURATION}ms");
+            }
+
+            // Zet alle benodigde richtingen op rood
+            foreach (var d in directions)
+            {
+                if (!protect.Contains(d.Id))
+                {
+                    d.Color = LightColor.Red;
+                    if (currentGreenDirections.Contains(d))
+                        currentGreenDirections.Remove(d);
+                    if (currentOrangeDirections.Contains(d))
+                        currentOrangeDirections.Remove(d);
+                }
+            }
+
+            // Nu kunnen we de prioriteitsrichting op groen zetten
             prioDir.Color = LightColor.Green;
+            currentGreenDirections.Clear(); // Voor de zekerheid
+            currentOrangeDirections.Clear();
             currentGreenDirections.Add(prioDir);
 
             lastSwitchTime = DateTime.Now;
@@ -244,6 +284,7 @@ namespace stoplicht_controller.Managers
             isOverrideActive = true;
 
             SendTrafficLightStates();
+            Console.WriteLine($"Prioriteitsrichting {dirId} op groen gezet");
         }
 
         public async Task ClearOverride()
