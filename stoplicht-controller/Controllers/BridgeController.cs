@@ -28,9 +28,7 @@ namespace stoplicht_controller.Managers
         private readonly Communicator communicator;
         private readonly List<Direction> directions;
         private readonly Bridge bridge;
-
         private HashSet<int> activeConflictDirections = new HashSet<int>();
-
         public bool IsHandlingPriority { get; private set; }
         private readonly object bridgeLock = new();
         private CancellationTokenSource bridgeCts;
@@ -348,6 +346,7 @@ namespace stoplicht_controller.Managers
             Console.WriteLine("Waiting until no vessel under bridge...");
             await WaitUntilNoVesselUnderBridge(token);
 
+            activeConflictDirections.Clear();
             // close bridge
             currentBridgeState = "rood";
             SendBridgeStates();
@@ -492,8 +491,6 @@ namespace stoplicht_controller.Managers
                 // Add this conflict direction ID to our tracking set
                 activeConflictDirections.Add(d.Id);
             }
-
-            // SendBridgeStates();
         }
     }
 }
