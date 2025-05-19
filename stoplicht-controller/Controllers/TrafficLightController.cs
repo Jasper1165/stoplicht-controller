@@ -239,8 +239,6 @@ namespace stoplicht_controller.Managers
             // Als er kruisende wegen op groen staan, zet ze eerst op oranje
             if (crossingDirections.Any())
             {
-                // Console.WriteLine($"Oranje fase gestart voor {crossingDirections.Count} kruisende wegen voordat prioriteitsrichting {dirId} op groen gaat");
-
                 // Zet kruisende richtingen op oranje
                 foreach (var d in crossingDirections)
                 {
@@ -252,12 +250,21 @@ namespace stoplicht_controller.Managers
                     }
                 }
 
-                // Update sturen na wijziging naar oranje
+                // Oranje fase zichtbaar maken
+                lastOrangeTime = DateTime.Now;
                 SendTrafficLightStates();
+                Console.WriteLine("Oranje fase gestart voor kruisende wegen");
 
-                // Wachten tijdens oranje fase
-                await Task.Delay(ORANGE_DURATION);
-                // Console.WriteLine($"Oranje fase voltooid na {ORANGE_DURATION}ms");
+                try
+                {
+                    // Wachten tijdens oranje fase
+                    await Task.Delay(ORANGE_DURATION);
+                    Console.WriteLine($"Oranje fase voltooid na {ORANGE_DURATION}ms");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Fout tijdens oranje fase: {ex.Message}");
+                }
             }
 
             // Zet alle benodigde richtingen op rood
@@ -286,7 +293,6 @@ namespace stoplicht_controller.Managers
             SendTrafficLightStates();
             Console.WriteLine($"Prioriteitsrichting {dirId} op groen gezet");
         }
-
         public async Task ClearOverride()
         {
             if (!isOverrideActive) return;
