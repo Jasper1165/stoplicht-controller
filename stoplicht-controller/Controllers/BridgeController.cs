@@ -299,6 +299,9 @@ namespace stoplicht_controller.Managers
 
         private async Task HandleBridgeSession(CancellationToken token)
         {
+            // clear previous conflicts
+            activeConflictDirections.Clear();
+
             // throw if cancelled
             token.ThrowIfCancellationRequested();
 
