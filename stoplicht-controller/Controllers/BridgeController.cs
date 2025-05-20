@@ -238,7 +238,7 @@ namespace stoplicht_controller.Managers
                     .Select(tl => tl.Id)
                     .ToHashSet(StringComparer.Ordinal);
 
-                return data.Queue.Any(v => v.Priority >= 1 && laneSet.Contains(v.Lane));
+                return data.Queue.Any(v => v.Priority == 1 && laneSet.Contains(v.Lane));
             }
             catch { return false; }
         }
@@ -285,6 +285,13 @@ namespace stoplicht_controller.Managers
                     // Zet kruisende verkeerslichten op groen
                     Console.WriteLine("Verkeerslichten op groen zetten voor prioriteitsvoertuig");
                     ChangeCrossingTrafficLights(LightColor.Green);
+
+                    // reset brugcycle
+                    isBridgeCycleRunning = false;
+                    bridgeUsedThisCycle = false;
+                    postBridgeNormalPhaseActive = false;
+                    postBridgePhaseStartTime = DateTime.Now.AddSeconds(-50);
+                    lastBridgeClosedTime = DateTime.Now.AddSeconds(-50);
                 }
                 else
                 {
@@ -313,6 +320,13 @@ namespace stoplicht_controller.Managers
                     // Zet kruisende verkeerslichten op groen
                     Console.WriteLine("Verkeerslichten op groen zetten voor prioriteitsvoertuig");
                     ChangeCrossingTrafficLights(LightColor.Green);
+
+                    // reset brugcycle
+                    isBridgeCycleRunning = false;
+                    bridgeUsedThisCycle = false;
+                    postBridgeNormalPhaseActive = false;
+                    postBridgePhaseStartTime = DateTime.Now.AddSeconds(-50);
+                    lastBridgeClosedTime = DateTime.Now.AddSeconds(-50);
                 }
 
                 // Wacht een redelijke tijd voor prioriteitsvoertuig om te passeren

@@ -13,7 +13,7 @@ namespace stoplicht_controller.Managers
     public class TrafficLightController
     {
         // ========= CONFIG =========
-        private const int ORANGE_DURATION = 4_500;
+        private const int ORANGE_DURATION = 5_000;
         private const int DEFAULT_GREEN_DURATION = 10_000;
         private const int SHORT_GREEN_DURATION = 10_000;
         private const int PRIORITY_THRESHOLD = 3;
