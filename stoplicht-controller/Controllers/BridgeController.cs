@@ -15,7 +15,7 @@ namespace stoplicht_controller.Managers
         // ───────────────────────────────────────────────────────────────
         //  ► CONFIG CONSTANTS  ─ timings are in milliseconds unless noted
         // ───────────────────────────────────────────────────────────────
-        private const int BRIDGE_GREEN_DURATION = 20_000;     // boat pass A/B
+        private const int BRIDGE_GREEN_DURATION = 20_000;     // boot pass A/B
         private const int BRIDGE_ORANGE_DURATION = 10_000;
         private const int POST_BRIDGE_NORMAL_PHASE_MS = 30_000;  // traffic free-flow
         private const int BRIDGE_COOLDOWN_SECONDS = 60;         // min gap between sessions
@@ -45,6 +45,9 @@ namespace stoplicht_controller.Managers
 
         private string currentBridgeState = "rood";    // software state of TL 81.1
         private string physicalBridgeState = "dicht";  // sensor feedback
+
+        // Bridge traffic light ID (hardcoded)
+        private const string BRIDGE_LIGHT_ID = "81.1";
 
         // ───────────────────────────────────────────────────────────────
         //  ► PUBLIC API
@@ -133,7 +136,7 @@ namespace stoplicht_controller.Managers
             {
                 var data = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, string>>>(communicator.BridgeSensorData);
                 if (data != null
-                    && data.TryGetValue("81.1", out var inner)
+                    && data.TryGetValue(BRIDGE_LIGHT_ID, out var inner)
                     && inner.TryGetValue("state", out var state)
                     && (state == "open" || state == "dicht")
                     && physicalBridgeState != state)
@@ -166,7 +169,7 @@ namespace stoplicht_controller.Managers
         {
             if (CheckForPriorityVehicle())
             {
-                var priorityToken = bridgeCts.Token;
+                var priorityToken = bridgeCts?.Token ?? CancellationToken.None;
 
                 await HandlePriorityVehicleAsync(priorityToken);
                 return;
@@ -231,14 +234,9 @@ namespace stoplicht_controller.Managers
                 var data = JsonConvert.DeserializeObject<PriorityVehicleQueue>(communicator.PriorityVehicleData);
                 if (data?.Queue == null || data.Queue.Count == 0) return false;
 
-                var bridgeDirIds = GetBridgeIntersectionSet();
-                var laneSet = directions
-                    .Where(d => bridgeDirIds.Contains(d.Id))
-                    .SelectMany(d => d.TrafficLights)
-                    .Select(tl => tl.Id)
-                    .ToHashSet(StringComparer.Ordinal);
-
-                return data.Queue.Any(v => v.Priority == 1 && laneSet.Contains(v.Lane));
+                // Als er geen IDs meer zijn voor de stoplichten, dan moeten we alleen kijken naar
+                // of er een prioriteitsvoertuig is met prioriteit 1
+                return data.Queue.Any(v => v.Priority == 1);
             }
             catch { return false; }
         }
@@ -473,42 +471,51 @@ namespace stoplicht_controller.Managers
 
         private void SendBridgeStates()
         {
-            if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;
             try
             {
-                var laneSensors = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(communicator.LaneSensorData);
-                if (laneSensors == null) return;
+                // Maak een nieuwe lege dictionary voor de payload
+                var payload = new Dictionary<string, string>();
 
-                // bestaand payload
-                var payload = laneSensors.Keys.ToDictionary(
-                    id => id,
-                    id =>
-                    {
-                        var tl = directions.SelectMany(d => d.TrafficLights).First(t => t.Id == id);
-                        var dir = directions.First(d => d.TrafficLights.Contains(tl));
-                        return dir.Color == LightColor.Green ? "groen"
-                             : dir.Color == LightColor.Orange ? "oranje"
-                             : "rood";
-                    });
+                // Voeg de brugstatus toe aan de payload
+                payload[BRIDGE_LIGHT_ID] = CurrentBridgeState;
 
-                // voeg brug-toestand toe
-                payload["81.1"] = CurrentBridgeState;
-
-                // TODO: hetzelfde voor groen maken (brug open)
-                // Voeg conflicterende richtings IDs toe aan de payload
-                if (activeConflictDirections.Count > 0)
+                // Voeg statussen van alle richtingen toe
+                foreach (var dir in directions)
                 {
-                    foreach (var conflictId in activeConflictDirections)
+                    // Gebruik direction ID als sleutel wanneer er geen verkeerslichten zijn
+                    string dirColor = dir.Color == LightColor.Green ? "groen"
+                                    : dir.Color == LightColor.Orange ? "oranje"
+                                    : "rood";
+
+                    // Als er geen verkeerslichten zijn in deze richting, sla over
+                    if (dir.TrafficLights == null || dir.TrafficLights.Count == 0)
+                        continue;
+
+                    // Anders, voeg toe voor elk verkeerslicht in deze richting
+                    foreach (var tl in dir.TrafficLights)
                     {
-                        // Add the conflict ID to the payload with a special prefix to identify it
-                        payload[$"{conflictId}.1"] = currentBridgeState == "rood" ? "groen" : "rood";
+                        // Als het verkeerslicht een geldige ID heeft
+                        if (!string.IsNullOrEmpty(tl.Id))
+                        {
+                            payload[tl.Id] = dirColor;
+                        }
+                    }
+
+                    // Voeg ook toe aan de ID mapping voor conflictrichtingen
+                    if (activeConflictDirections.Contains(dir.Id))
+                    {
+                        // Gebruik een vaste format voor conflictrichtingen
+                        payload[$"{dir.Id}.1"] = currentBridgeState == "rood" ? "groen" : "rood";
                     }
                 }
 
-                // publiceer alles in één boodschap
+                // Publiceer de payload
                 communicator.PublishMessage("stoplichten", payload);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in SendBridgeStates: {ex.Message}");
+            }
         }
 
         // ───────────────────────────────────────────────────────────────

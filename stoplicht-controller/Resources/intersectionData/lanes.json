@@ -6,7 +6,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "2": {
@@ -14,7 +14,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}, "2": {}},
+      "lanes": { "1": {}, "2": {} },
       "is_physical_barrier": false
     },
     "3": {
@@ -22,7 +22,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "4": {
@@ -30,7 +30,7 @@
       "is_inverse_of": false,
       "extends_to": [42],
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false,
       "transition_blockers": {
         "green": [
@@ -62,7 +62,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "6": {
@@ -70,7 +70,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "7": {
@@ -78,7 +78,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "8": {
@@ -86,7 +86,7 @@
       "is_inverse_of": false,
       "extends_to": [42],
       "vehicle_type": ["car"],
-      "lanes": {"1": {}, "2": {}},
+      "lanes": { "1": {}, "2": {} },
       "is_physical_barrier": false,
       "transition_blockers": {
         "green": [
@@ -118,7 +118,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "10": {
@@ -126,7 +126,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "11": {
@@ -134,7 +134,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "12": {
@@ -142,7 +142,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false,
       "transition_blockers": {
         "green": [
@@ -174,7 +174,7 @@
       "is_inverse_of": 22,
       "extends_to": false,
       "vehicle_type": ["bike"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "22": {
@@ -182,7 +182,7 @@
       "is_inverse_of": 21,
       "extends_to": false,
       "vehicle_type": ["bike"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "23": {
@@ -190,7 +190,7 @@
       "is_inverse_of": 24,
       "extends_to": false,
       "vehicle_type": ["bike"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "24": {
@@ -198,7 +198,7 @@
       "is_inverse_of": 23,
       "extends_to": false,
       "vehicle_type": ["bike"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "25": {
@@ -206,7 +206,7 @@
       "is_inverse_of": 26,
       "extends_to": false,
       "vehicle_type": ["bike"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "26": {
@@ -214,7 +214,7 @@
       "is_inverse_of": 25,
       "extends_to": false,
       "vehicle_type": ["bike"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "27": {
@@ -222,7 +222,7 @@
       "is_inverse_of": 28,
       "extends_to": false,
       "vehicle_type": ["bike"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "28": {
@@ -230,14 +230,14 @@
       "is_inverse_of": 27,
       "extends_to": false,
       "vehicle_type": ["bike"],
-      "lanes": {"1": {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "31": {
       "intersects_with": [1, 2, 3],
       "is_inverse_of": false,
       "extends_to": false,
-      "vehicle_type":["walk"],
+      "vehicle_type": ["walk"],
       "lanes": {
         "1": {
           "is_inverse_of": "31.2",
@@ -366,7 +366,7 @@
       "is_inverse_of": false,
       "extends_to": [1, 2, 3],
       "vehicle_type": ["car"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "42": {
@@ -374,7 +374,7 @@
       "is_inverse_of": false,
       "extends_to": false,
       "vehicle_type": ["car"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "51": {
@@ -382,7 +382,7 @@
       "is_inverse_of": 54,
       "extends_to": false,
       "vehicle_type": ["walk", "bike"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "52": {
@@ -390,7 +390,7 @@
       "is_inverse_of": 53,
       "extends_to": false,
       "vehicle_type": ["walk", "bike"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "53": {
@@ -398,7 +398,7 @@
       "is_inverse_of": 52,
       "extends_to": false,
       "vehicle_type": ["walk", "bike"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "54": {
@@ -406,7 +406,7 @@
       "is_inverse_of": 51,
       "extends_to": false,
       "vehicle_type": ["walk", "bike"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": false
     },
     "61": {
@@ -414,7 +414,7 @@
       "is_inverse_of": 64,
       "extends_to": false,
       "vehicle_type": ["walk", "bike"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": true,
       "transition_requirements": {
         "green": [
@@ -438,7 +438,7 @@
       "is_inverse_of": 63,
       "extends_to": false,
       "vehicle_type": ["walk", "bike"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": true,
       "transition_requirements": {
         "green": [
@@ -462,7 +462,7 @@
       "is_inverse_of": 62,
       "extends_to": false,
       "vehicle_type": ["walk", "bike"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": true,
       "transition_requirements": {
         "green": [
@@ -486,7 +486,7 @@
       "is_inverse_of": 61,
       "extends_to": false,
       "vehicle_type": ["walk", "bike"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": true,
       "transition_requirements": {
         "green": [
@@ -510,7 +510,7 @@
       "is_inverse_of": 72,
       "extends_to": false,
       "vehicle_type": ["boat"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": true,
       "transition_requirements": {
         "red": [
@@ -534,7 +534,7 @@
       "is_inverse_of": 71,
       "extends_to": false,
       "vehicle_type": ["boat"],
-      "lanes": {"1":  {}},
+      "lanes": { "1": {} },
       "is_physical_barrier": true,
       "transition_requirements": {
         "red": [
