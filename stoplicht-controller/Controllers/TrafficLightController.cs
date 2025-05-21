@@ -39,6 +39,8 @@ namespace stoplicht_controller.Managers
 
         private readonly Communicator communicator;
         private readonly List<Direction> directions;
+        // Combined payload for sending bridge combined with traffic light data
+        public readonly Dictionary<string, string> CombinedPayload = new Dictionary<string, string>();
         private readonly BridgeController bridgeController;
         private readonly Bridge bridge;
 
@@ -64,7 +66,7 @@ namespace stoplicht_controller.Managers
             this.priorityManager = priorityManager;
 
             InitializeLastGreenTimes(directions);
-            bridgeController = new BridgeController(communicator, directions, bridge);
+            bridgeController = new BridgeController(communicator, directions, bridge, CombinedPayload);
         }
 
         // Expose for PriorityVehicleManager
@@ -642,27 +644,22 @@ namespace stoplicht_controller.Managers
         /// </summary>
         private void SendTrafficLightStates()
         {
-            if (string.IsNullOrEmpty(communicator.LaneSensorData)) return;
-            var data = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, bool>>>(
-                communicator.LaneSensorData);
-            if (data == null) return;
+            // 1) update de TL-staten in CombinedPayload
+            foreach (var dir in directions)
+            {
+                if (dir.TrafficLights == null) continue;
+                var color = dir.Color == LightColor.Green ? "groen"
+                          : dir.Color == LightColor.Orange ? "oranje"
+                          : "rood";
+                foreach (var tl in dir.TrafficLights)
+                    CombinedPayload[tl.Id] = color;
+            }
 
-            var dict = data.Keys.ToDictionary(
-                id => id,
-                id =>
-                {
-                    var tl = directions.SelectMany(d => d.TrafficLights).First(t => t.Id == id);
-                    var dir = directions.First(d => d.TrafficLights.Contains(tl));
-                    return dir.Color switch
-                    {
-                        LightColor.Green => "groen",
-                        LightColor.Orange => "oranje",
-                        _ => "rood"
-                    };
-                });
+            // 2) vraag BridgeController om wél zijn deel te updaten
+            bridgeController.SendBridgeStates();
 
-            dict["81.1"] = bridgeController.CurrentBridgeState;
-            communicator.PublishMessage("stoplichten", dict);
+            // 3) publiceer uiteindelijk maar één keer het totaal
+            communicator.PublishMessage("stoplichten", CombinedPayload);
         }
     }
 }
