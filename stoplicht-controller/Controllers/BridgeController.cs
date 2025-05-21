@@ -92,7 +92,7 @@ namespace stoplicht_controller.Managers
             SetInitialBridgeState();
         }
 
-        private async void SetInitialBridgeState()
+        private void SetInitialBridgeState()
         {
             var dirA = directions.FirstOrDefault(d => d.Id == bridgeDirectionA);
             var dirB = directions.FirstOrDefault(d => d.Id == bridgeDirectionB);
@@ -110,9 +110,6 @@ namespace stoplicht_controller.Managers
 
             // Always call MakeCrossingGreen to ensure intersections go green regardless of IDs
             ChangeCrossingTrafficLights(LightColor.Green);
-
-            // Send updated states
-            SendBridgeStates();
         }
 
         private void OpenConflicts(Direction dir)
@@ -353,14 +350,14 @@ namespace stoplicht_controller.Managers
             ChangeCrossingTrafficLights(LightColor.Red);
 
             // wait
-            await Task.Delay(5_000, token);
+            await Task.Delay(6_000, token);
 
             // wait for vehicle on bridge to pass
             Console.WriteLine("Waiting until no vehicle on the bridge...");
             await WaitUntilNoBridgeVehicle(token);
 
             // close the barriers
-            await Task.Delay(5_000, token);
+            await Task.Delay(6_000, token);
 
             currentBridgeState = "groen";
             SendBridgeStates();
@@ -407,6 +404,7 @@ namespace stoplicht_controller.Managers
             {
                 token.ThrowIfCancellationRequested();
                 ProcessBridgeSensorData();
+                Console.WriteLine(bridge.VehicleOnBridge);
                 if (!bridge.VehicleOnBridge)
                 {
                     await Task.Delay(SAFETY_CHECK_INTERVAL, token);
@@ -509,6 +507,9 @@ namespace stoplicht_controller.Managers
                     }
                 }
 
+                // show payload
+                Console.WriteLine($"Payload: {JsonConvert.SerializeObject(payload)}");
+
                 // Publiceer de payload
                 communicator.PublishMessage("stoplichten", payload);
             }
@@ -524,6 +525,7 @@ namespace stoplicht_controller.Managers
 
         private void ChangeCrossingTrafficLights(LightColor color)
         {
+            Console.WriteLine($"Changing crossing traffic lights to {color}");
             var conflicts = directions.Where(d => d.Id != bridgeDirectionA && d.Intersections.Contains(bridgeDirectionA)).ToList();
 
             // Clear previous conflicts and add new ones
