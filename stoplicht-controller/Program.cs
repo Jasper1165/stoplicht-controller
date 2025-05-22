@@ -30,6 +30,13 @@ class Program
         var priorityVehicleManager = new PriorityVehicleManager(communicator, Directions, trafficLightController);
         var priorityCalculator = new PriorityCalculator(); // Create an instance of IPriorityCalculator
 
+        using var statePublisher = new StatePublisher(
+            trafficLightController,
+            trafficLightController.bridgeController,   // je hebt 'BridgeController' als public property nodig
+            communicator
+        );
+
+
         // Start subscriber en loopen
         var subscriberTask = Task.Run(() => communicator.StartSubscriber(), cancellationTokenSource.Token);
         var priorityTask = Task.Run(() => priorityVehicleManager.Update(), cancellationTokenSource.Token);

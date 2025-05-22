@@ -57,11 +57,11 @@ namespace stoplicht_controller.Classes
                             string receivedTopic = subscriber.ReceiveFrameString().Trim();
                             // Lees het tweede frame, dat de payload bevats
                             string message = subscriber.ReceiveFrameString().Trim();
-                            if (receivedTopic == "voorrangsvoertuig")
-                            {
-                                Console.WriteLine($"Bericht ontvangen op topic '{receivedTopic}': {message}");
+                            // if (receivedTopic == "voorrangsvoertuig")
+                            // {
+                            //     Console.WriteLine($"Bericht ontvangen op topic '{receivedTopic}': {message}");
 
-                            }
+                            // }
                             ProcessMessage(receivedTopic, message);
                         }
                     }
