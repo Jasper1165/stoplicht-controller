@@ -21,21 +21,21 @@ namespace stoplicht_controller.Managers
 
         // Threshold voor jam-detectie (ms)
         private const int JAM_THRESHOLD_MS = 10_000;
-        private bool jamEngaged = false;           // track of jam engaged
+        private bool jamEngaged = false;
         private DateTime? jamDetectedAt = null;
         private DateTime? jamClearedAt = null;
 
-        public bool JamEngaged => jamEngaged;     // expose jamEngaged
+        public bool JamEngaged => jamEngaged;
 
         private static readonly HashSet<int> JAM_BLOCK_DIRECTIONS = new() { 8, 12, 4 };
         private static readonly HashSet<int> BRIDGE_DIRECTIONS = new() { 71, 72 };
 
         // ========= STATE =========
         private DateTime lastSwitchTime = DateTime.Now;
-        private DateTime lastOrangeTime = DateTime.Now;
 
-        // FIX: Track oranje start tijd per richting
+        // GEFIXED: Gebruik alleen per-richting timing, geen globale lastOrangeTime meer
         private readonly Dictionary<int, DateTime> orangeStartTimes = new();
+        private readonly Dictionary<int, DateTime> greenStartTimes = new();
 
         private List<Direction> currentGreenDirections = new();
         private List<Direction> currentOrangeDirections = new();
@@ -111,7 +111,7 @@ namespace stoplicht_controller.Managers
                 try
                 {
                     ProcessSensorMessage();
-                    UpdateTrafficLights();
+                    await UpdateTrafficLights();
                 }
                 catch (Exception ex)
                 {
@@ -154,137 +154,276 @@ namespace stoplicht_controller.Managers
 
         // ========= TRAFFIC UPDATE =========
 
-        private void UpdateTrafficLights()
+        private async Task UpdateTrafficLights()
         {
             var now = DateTime.Now;
+            var protect = GetProtectedBridgeCluster();
 
-            // 1) Threshold-based jam detection
+            // ─── Auto-clear override ───
+            // Als we in override zitten, maar er is geen Prio-1 meer actief,
+            // dan resetten we de override en gaan we terug naar normale cyclus.
+            if (isOverrideActive && !(priorityManager?.HasActivePrio1 ?? false))
+            {
+                await ClearOverride();
+                return;
+            }
+
+            // ─── Prio-1 override via helper ───
+            if (await HandlePrio1OverrideAsync())
+                return;
+
+            // --- Jam-detectie ---
             bool sensorJam = bridge.TrafficJamNearBridge;
             if (sensorJam)
             {
                 jamClearedAt = null;
-                if (!jamDetectedAt.HasValue)
-                    jamDetectedAt = now;
+                if (!jamDetectedAt.HasValue) jamDetectedAt = now;
                 else if (!jamEngaged
                          && (now - jamDetectedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
                 {
                     jamEngaged = true;
                     jamDetectedAt = null;
-                    Console.WriteLine(">>> Jam engaged after threshold");
+                    Console.WriteLine(">>> Jam engaged");
                 }
             }
             else
             {
                 jamDetectedAt = null;
-                if (!jamClearedAt.HasValue)
-                    jamClearedAt = now;
+                if (!jamClearedAt.HasValue) jamClearedAt = now;
                 else if (jamEngaged
                          && (now - jamClearedAt.Value).TotalMilliseconds >= JAM_THRESHOLD_MS)
                 {
                     jamEngaged = false;
                     jamClearedAt = null;
-                    Console.WriteLine(">>> Jam cleared after threshold");
+                    Console.WriteLine(">>> Jam cleared");
                 }
             }
 
-            // 2) Oranje-fase: global eight-second delay
-            var sinceO = (now - lastOrangeTime).TotalMilliseconds;
+            // --- Oranje-fase per richting ---
             if (currentOrangeDirections.Any())
             {
-                if (sinceO >= ORANGE_DURATION)
-                {
-                    // alle oranje-lichten tegelijk uit
-                    foreach (var od in currentOrangeDirections.ToList())
-                    {
-                        od.Color = LightColor.Red;
-                        currentOrangeDirections.Remove(od);
-                    }
+                bool anyOrangeProcessed = false;
 
-                    // nieuwe fase
+                foreach (var od in currentOrangeDirections.ToList())
+                {
+                    var orangeStart = orangeStartTimes.GetValueOrDefault(od.Id, now);
+                    var orangeDuration = (now - orangeStart).TotalMilliseconds;
+
+                    if (orangeDuration >= ORANGE_DURATION)
+                    {
+                        if (protect.Contains(od.Id))
+                        {
+                            currentOrangeDirections.Remove(od);
+                            orangeStartTimes.Remove(od.Id);
+                        }
+                        else
+                        {
+                            SetDirectionToRed(od);
+                            anyOrangeProcessed = true;
+                        }
+                    }
+                }
+
+                if (anyOrangeProcessed && !currentOrangeDirections.Any(od => !protect.Contains(od.Id)))
+                {
                     SwitchTrafficLights();
                     SendTrafficLightStates();
                 }
                 return;
             }
 
-            // 3) Groene-fase
+            // --- Groene-fase per richting ---
             if (currentGreenDirections.Any())
             {
-                int sumP = currentGreenDirections.Sum(GetEffectivePriority);
-                int dur = sumP >= HIGH_PRIORITY_THRESHOLD
-                            ? DEFAULT_GREEN_DURATION + 2000
-                            : sumP < PRIORITY_THRESHOLD
-                                ? SHORT_GREEN_DURATION
-                                : DEFAULT_GREEN_DURATION;
+                var nonProtectedGreen = currentGreenDirections.Where(gd => !protect.Contains(gd.Id)).ToList();
 
-                var sinceG = (now - lastSwitchTime).TotalMilliseconds;
-                if (sinceG >= dur)
+                if (nonProtectedGreen.Any())
                 {
-                    // groen → oranje
-                    foreach (var gd in currentGreenDirections.ToList())
+                    int sumP = nonProtectedGreen.Sum(GetEffectivePriority);
+                    int dur = sumP >= HIGH_PRIORITY_THRESHOLD
+                                ? DEFAULT_GREEN_DURATION + 2000
+                                : sumP < PRIORITY_THRESHOLD
+                                    ? SHORT_GREEN_DURATION
+                                    : DEFAULT_GREEN_DURATION;
+
+                    var sinceG = (now - lastSwitchTime).TotalMilliseconds;
+
+                    if (sinceG >= dur)
                     {
-                        gd.Color = LightColor.Orange;
-                        currentOrangeDirections.Add(gd);
-                        currentGreenDirections.Remove(gd);
+                        foreach (var gd in nonProtectedGreen)
+                        {
+                            SetDirectionToOrange(gd, now);
+                            currentGreenDirections.Remove(gd);
+                        }
+                        SendTrafficLightStates();
+                        return;
                     }
-                    lastOrangeTime = now;
+                }
+
+                var extra = GetExtraGreenCandidates()
+                    .Where(d => !protect.Contains(d.Id))
+                    .ToList();
+                if (extra.Any())
+                {
+                    foreach (var e in extra)
+                    {
+                        SetDirectionToGreen(e, now);
+                        currentGreenDirections.Add(e);
+                    }
+                    lastSwitchTime = now;
                     SendTrafficLightStates();
                 }
-                else
-                {
-                    // probeer extra groen
-                    var extra = GetExtraGreenCandidates();
-                    if (extra.Any())
-                    {
-                        foreach (var e in extra)
-                        {
-                            e.Color = LightColor.Green;
-                            currentGreenDirections.Add(e);
-                            lastGreenTimes[e.Id] = now;
-                        }
-                        lastSwitchTime = now;
-                        SendTrafficLightStates();
-                    }
 
-                    // jam-block
-                    if (jamEngaged)
+                if (jamEngaged)
+                {
+                    bool changed = false;
+                    foreach (var d in currentGreenDirections.ToList())
                     {
-                        bool changed = false;
-                        foreach (var d in currentGreenDirections.ToList())
+                        if (protect.Contains(d.Id)) continue;
+                        if (JAM_BLOCK_DIRECTIONS.Contains(d.Id))
                         {
-                            if (JAM_BLOCK_DIRECTIONS.Contains(d.Id))
-                            {
-                                d.Color = LightColor.Orange;
-                                currentOrangeDirections.Add(d);
-                                currentGreenDirections.Remove(d);
-                                changed = true;
-                            }
-                        }
-                        if (changed)
-                        {
-                            lastOrangeTime = now;
-                            SendTrafficLightStates();
+                            SetDirectionToOrange(d, now);
+                            currentGreenDirections.Remove(d);
+                            changed = true;
                         }
                     }
+                    if (changed)
+                        SendTrafficLightStates();
                 }
                 return;
             }
 
-            // 4) Nieuwe set groen
+            // --- Geen actieve fase: nieuwe set groen (skip protected) ---
             SwitchTrafficLights();
             SendTrafficLightStates();
         }
+        /// <summary>
+        /// Behandelt de Prio-1 override: oranje → wacht → rood → prio-groen.
+        /// Geeft true terug als de override is uitgevoerd.
+        /// </summary>
+        private async Task<bool> HandlePrio1OverrideAsync()
+        {
+            if (priorityManager?.HasActivePrio1 != true || isOverrideActive)
+                return false;
 
+            int? prioDirId = ParsePrio1DirectionId();
+            if (!prioDirId.HasValue)
+                return false;
 
+            var now = DateTime.Now;
+            var prioDir = directions.First(d => d.Id == prioDirId.Value);
+            var protect = GetProtectedBridgeCluster();
 
-        // FIX: Helper methode om richting op oranje te zetten met juiste timing
+            // Zoek eerst écht conflicterende groene richtingen
+            var conflicts = currentGreenDirections
+                .Where(d => !protect.Contains(d.Id) && HasConflict(d, prioDir))
+                .ToList();
+
+            // Fallback: als er géén conflicts zijn, maar wél groene lichten,
+            // pak dan alle niet-protected groene richtingen
+            if (!conflicts.Any() && currentGreenDirections.Any())
+                conflicts = currentGreenDirections
+                    .Where(d => !protect.Contains(d.Id))
+                    .ToList();
+
+            // Oranje-fase
+            if (conflicts.Any())
+            {
+                foreach (var d in conflicts)
+                {
+                    SetDirectionToOrange(d, now);
+                    currentGreenDirections.Remove(d);
+                }
+                SendTrafficLightStates();
+
+                // Kort wachten en dan volle oranje-tijd
+                await Task.Delay(100);
+                await WaitForOrangeCompletion(conflicts);
+            }
+
+            // Oranje → rood
+            foreach (var d in conflicts)
+                SetDirectionToRed(d);
+
+            // Overige niet-prio, niet-protected → rood
+            foreach (var d in directions)
+            {
+                if (d.Id != prioDirId.Value && !protect.Contains(d.Id))
+                    SetDirectionToRed(d);
+            }
+
+            // Prio-richting op groen
+            SetDirectionToGreen(prioDir, now);
+
+            // Reset en doorsturen
+            currentGreenDirections.Clear();
+            currentOrangeDirections.Clear();
+            currentGreenDirections.Add(prioDir);
+            lastSwitchTime = now;
+            isOverrideActive = true;
+            SendTrafficLightStates();
+
+            return true;
+        }
+
+        // GEFIXED: Wacht tot oranje richtingen hun volledige duur hebben gehad
+        private async Task WaitForOrangeCompletion(List<Direction> orangeDirections)
+        {
+            if (!orangeDirections.Any()) return;
+
+            var protect = GetProtectedBridgeCluster();
+
+            while (true)
+            {
+                var now = DateTime.Now;
+                bool allCompleted = true;
+
+                foreach (var dir in orangeDirections)
+                {
+                    if (protect.Contains(dir.Id)) continue;
+
+                    var orangeStart = orangeStartTimes.GetValueOrDefault(dir.Id, now);
+                    var orangeDuration = (now - orangeStart).TotalMilliseconds;
+
+                    if (orangeDuration < ORANGE_DURATION)
+                    {
+                        allCompleted = false;
+                        break;
+                    }
+                }
+
+                if (allCompleted) break;
+                await Task.Delay(100);
+            }
+        }
+
+        // ========= GECENTRALISEERDE STATE-METHODS =========
+
         private void SetDirectionToOrange(Direction direction, DateTime time)
         {
             direction.Color = LightColor.Orange;
             orangeStartTimes[direction.Id] = time;
+            greenStartTimes.Remove(direction.Id);
 
             if (!currentOrangeDirections.Contains(direction))
                 currentOrangeDirections.Add(direction);
+        }
+
+        private void SetDirectionToGreen(Direction direction, DateTime time)
+        {
+            direction.Color = LightColor.Green;
+            greenStartTimes[direction.Id] = time;
+            lastGreenTimes[direction.Id] = time;
+            orangeStartTimes.Remove(direction.Id);
+        }
+
+        private void SetDirectionToRed(Direction direction)
+        {
+            direction.Color = LightColor.Red;
+            currentGreenDirections.Remove(direction);
+            currentOrangeDirections.Remove(direction);
+            orangeStartTimes.Remove(direction.Id);
+            greenStartTimes.Remove(direction.Id);
         }
 
         public async Task OverrideWithSingleGreen(int dirId)
@@ -305,32 +444,19 @@ namespace stoplicht_controller.Managers
                     SetDirectionToOrange(d, orangeTime);
                     currentGreenDirections.Remove(d);
                 }
-                // Alleen lastOrangeTime updaten als er geen andere oranje richtingen waren
-                if (orangeStartTimes.Count == conflicts.Count)
-                    lastOrangeTime = orangeTime;
 
                 SendTrafficLightStates();
-                await Task.Delay(ORANGE_DURATION);
+                await WaitForOrangeCompletion(conflicts);
             }
 
-            foreach (var d in directions)
-            {
-                if (!protect.Contains(d.Id))
-                {
-                    d.Color = LightColor.Red;
-                    currentGreenDirections.Remove(d);
-                    currentOrangeDirections.Remove(d);
-                    orangeStartTimes.Remove(d.Id);
-                }
-            }
+            foreach (var d in directions.Where(d => !protect.Contains(d.Id)))
+                SetDirectionToRed(d);
 
-            prioDir.Color = LightColor.Green;
+            SetDirectionToGreen(prioDir, DateTime.Now);
             currentGreenDirections.Clear();
             currentOrangeDirections.Clear();
-            orangeStartTimes.Clear();
             currentGreenDirections.Add(prioDir);
             lastSwitchTime = DateTime.Now;
-            lastOrangeTime = DateTime.Now;
             isOverrideActive = true;
             SendTrafficLightStates();
         }
@@ -349,25 +475,12 @@ namespace stoplicht_controller.Managers
                     currentGreenDirections.Remove(gd);
                 }
             }
-            // Alleen lastOrangeTime updaten als er geen andere oranje richtingen waren
-            if (orangeStartTimes.Count == currentOrangeDirections.Count)
-                lastOrangeTime = orangeTime;
 
             SendTrafficLightStates();
-            await Task.Delay(ORANGE_DURATION);
+            await WaitForOrangeCompletion(currentOrangeDirections.Where(d => !protect.Contains(d.Id)).ToList());
 
-            foreach (var od in currentOrangeDirections.ToList())
-            {
-                if (!protect.Contains(od.Id))
-                {
-                    od.Color = LightColor.Red;
-                    currentOrangeDirections.Remove(od);
-                    orangeStartTimes.Remove(od.Id);
-                }
-            }
-            foreach (var d in directions)
-                if (!protect.Contains(d.Id))
-                    d.Color = LightColor.Red;
+            foreach (var d in directions.Where(d => !protect.Contains(d.Id)))
+                SetDirectionToRed(d);
 
             isOverrideActive = false;
             SendTrafficLightStates();
@@ -388,6 +501,26 @@ namespace stoplicht_controller.Managers
             return set;
         }
 
+        private int? ParsePrio1DirectionId()
+        {
+            if (string.IsNullOrEmpty(communicator.PriorityVehicleData))
+                return null;
+            try
+            {
+                var prioData = JsonConvert.DeserializeObject<
+                    Dictionary<string, List<Dictionary<string, object>>>>(
+                        communicator.PriorityVehicleData);
+                var queue = prioData?["queue"];
+                var veh = queue?.FirstOrDefault(v => v["prioriteit"].ToString() == "1");
+                if (veh != null
+                    && veh.TryGetValue("baan", out var lane)
+                    && int.TryParse(lane.ToString().Split('.')[0], out int id))
+                    return id;
+            }
+            catch { }
+            return null;
+        }
+
         private List<Direction> GetExtraGreenCandidates()
         {
             var bridgeIds = bridgeController.GetBridgeIntersectionSet();
@@ -404,7 +537,6 @@ namespace stoplicht_controller.Managers
             var pick = new List<Direction>();
             foreach (var d in avail)
             {
-                // CRUCIALE FIX: Controleer conflicten met zowel nieuwe kandidaten als bestaande groene richtingen
                 if (!pick.Any(x => HasConflict(x, d)) &&
                     !currentGreenDirections.Any(x => HasConflict(x, d)))
                     pick.Add(d);
@@ -417,13 +549,16 @@ namespace stoplicht_controller.Managers
             if (isOverrideActive || priorityManager?.HasActivePrio1 == true)
                 return;
 
-            if (currentOrangeDirections.Any())
-                SetLightsToRed();
+            var toCleanup = currentOrangeDirections.ToList();
+            foreach (var d in toCleanup)
+                SetDirectionToRed(d);
 
+            var protect = GetProtectedBridgeCluster();
             var bridgeIds = bridgeController.GetBridgeIntersectionSet();
             var avail = directions
                 .Where(d =>
                     GetPriority(d) > 0 &&
+                    !protect.Contains(d.Id) &&
                     !(bridgeIds.Contains(d.Id) && bridgeController.CurrentBridgeState != "dicht") &&
                     !(jamEngaged && JAM_BLOCK_DIRECTIONS.Contains(d.Id)))
                 .OrderByDescending(GetEffectivePriority)
@@ -435,33 +570,25 @@ namespace stoplicht_controller.Managers
                 if (!pick.Any(x => HasConflict(x, d)))
                     pick.Add(d);
 
-            foreach (var g in currentGreenDirections)
-                g.Color = LightColor.Red;
+            foreach (var g in currentGreenDirections.ToList())
+                if (!protect.Contains(g.Id))
+                    SetDirectionToRed(g);
 
-            currentGreenDirections = pick;
+            var now = DateTime.Now;
+            currentGreenDirections = currentGreenDirections.Where(g => protect.Contains(g.Id)).ToList();
+
             foreach (var g in pick)
-                lastGreenTimes[g.Id] = DateTime.Now;
-            foreach (var g in pick)
-                g.Color = LightColor.Green;
-
-            lastSwitchTime = DateTime.Now;
-        }
-
-        private void SetLightsToRed()
-        {
-            foreach (var d in currentOrangeDirections)
             {
-                d.Color = LightColor.Red;
-                orangeStartTimes.Remove(d.Id);
+                SetDirectionToGreen(g, now);
+                currentGreenDirections.Add(g);
             }
-            currentOrangeDirections.Clear();
+
+            lastSwitchTime = now;
         }
 
         private static bool HasConflict(Direction a, Direction b)
         {
-            bool conflict = a.Intersections.Contains(b.Id) || b.Intersections.Contains(a.Id);
-
-            return conflict;
+            return a.Intersections.Contains(b.Id) || b.Intersections.Contains(a.Id);
         }
 
         private int GetPriority(Direction d)
