@@ -14,8 +14,8 @@ namespace stoplicht_controller.Managers
     {
         // ========= CONFIG =========
         private const int ORANGE_DURATION = 5_000;
-        private const int DEFAULT_GREEN_DURATION = 10_000;
-        private const int SHORT_GREEN_DURATION = 10_000;
+        private const int DEFAULT_GREEN_DURATION = 8_000;
+        private const int SHORT_GREEN_DURATION = 8_000;
         private const int PRIORITY_THRESHOLD = 3;
         private const int HIGH_PRIORITY_THRESHOLD = 6;
         private const double AGING_SCALE_SECONDS = 5;

@@ -26,7 +26,7 @@ namespace stoplicht_controller.Managers
         private const int BRIDGE_GREEN_DURATION = 20_000;  // boot pass A/B
         private const int BRIDGE_ORANGE_DURATION = 10_000;
         private const int POST_BRIDGE_NORMAL_PHASE_MS = 30_000;  // traffic free-flow
-        private const int BRIDGE_COOLDOWN_SECONDS = 60;      // min gap between sessions
+        private const int BRIDGE_COOLDOWN_SECONDS = 180_000;      // min gap between sessions
         private const int SAFETY_CHECK_INTERVAL = 1_000;   // polling
         private const int BRIDGE_SWITCH_EXTRA_DELAY_MS = 10_000;  // ship still under bridge
 
@@ -272,6 +272,12 @@ namespace stoplicht_controller.Managers
                 }
                 else
                 {
+                    var dirA = directions.First(d => d.Id == bridgeDirectionA);
+                    var dirB = directions.First(d => d.Id == bridgeDirectionB);
+                    dirA.Color = LightColor.Red;
+                    dirB.Color = LightColor.Red;
+                    SendBridgeStates();
+
                     await WaitUntilNoVesselUnderBridge(token);
                     // OpenConflicts(null);
                     currentBridgeState = "rood";
@@ -334,7 +340,7 @@ namespace stoplicht_controller.Managers
             SendBridgeStates();
 
             await WaitForPhysicalBridgeState("dicht", token);
-            await Task.Delay(5_000, token);
+            await Task.Delay(2_000, token);
 
             ChangeCrossingTrafficLights(LightColor.Green);
         }
