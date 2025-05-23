@@ -302,7 +302,7 @@ namespace stoplicht_controller.Managers
                     SendBridgeStates();
 
                     await WaitForPhysicalBridgeState("dicht", token);
-                    await Task.Delay(6_000, token);
+                    await Task.Delay(1_000, token);
                     ChangeCrossingTrafficLights(LightColor.Green);
                 }
 
@@ -359,7 +359,7 @@ namespace stoplicht_controller.Managers
             SendBridgeStates();
 
             await WaitForPhysicalBridgeState("dicht", token);
-            await Task.Delay(2_000, token);
+            await Task.Delay(1_000, token);
 
             ChangeCrossingTrafficLights(LightColor.Green);
         }
