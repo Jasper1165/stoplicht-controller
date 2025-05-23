@@ -18,7 +18,7 @@ namespace stoplicht_controller.Managers
         private const int SHORT_GREEN_DURATION = 10_000;
         private const int PRIORITY_THRESHOLD = 3;
         private const int HIGH_PRIORITY_THRESHOLD = 6;
-        private const double AGING_SCALE_SECONDS = 7;
+        private const double AGING_SCALE_SECONDS = 5;
 
         // Threshold for traffic jam detection (ms)
         private const int JAM_THRESHOLD_MS = 10_000;
