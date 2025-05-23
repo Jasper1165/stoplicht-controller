@@ -272,8 +272,6 @@ namespace stoplicht_controller.Managers
                 }
                 else
                 {
-                    var dirA = directions.First(d => d.Id == bridgeDirectionA);
-                    var dirB = directions.First(d => d.Id == bridgeDirectionB);
                     dirA.Color = LightColor.Red;
                     dirB.Color = LightColor.Red;
                     SendBridgeStates();
