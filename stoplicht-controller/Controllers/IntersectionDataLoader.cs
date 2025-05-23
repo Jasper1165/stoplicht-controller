@@ -8,98 +8,90 @@ using stoplicht_controller.Enums;
 
 namespace stoplicht_controller.Managers
 {
+    /// <summary>
+    /// Loads intersection and lane data from a JSON resource file into Direction objects.
+    /// </summary>
     public static class IntersectionDataLoader
     {
+        /// <summary>
+        /// Reads the lanes.json file from the Resources folder and populates the provided directions list.
+        /// Each JSON group becomes a Direction, with its intersections and TrafficLight sensors initialized.
+        /// </summary>
+        /// <param name="directions">List of Direction instances to populate.</param>
         public static void LoadIntersectionData(List<Direction> directions)
         {
-            string jsonFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "intersectionData", "lanes.json");
+            // Construct the path to the JSON file in the application Resources directory
+            string jsonFilePath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "Resources",
+                "intersectionData",
+                "lanes.json");
+
+            // If the JSON file is missing, log an error and abort loading
             if (!File.Exists(jsonFilePath))
             {
-                Console.WriteLine($"Het bestand is niet gevonden: {jsonFilePath}");
+                Console.WriteLine($"File not found: {jsonFilePath}");
                 return;
             }
+
+            // Read the entire JSON content
             string jsonContent = File.ReadAllText(jsonFilePath);
+            // Parse the JSON into a JObject for easier traversal
             JObject jsonObject = JObject.Parse(jsonContent);
 
+            // Extract the "groups" section, mapping group IDs to their JSON definitions
             var groupsData = jsonObject["groups"]?.ToObject<Dictionary<string, JObject>>();
             if (groupsData == null)
                 return;
 
+            // Iterate over each group entry
             foreach (var (groupIdStr, groupObj) in groupsData)
             {
+                // Convert the group ID key to an integer
                 if (!int.TryParse(groupIdStr, out int groupId))
                     continue;
 
-                // Hier wordt er een Direction (of Group) aangemaakt op basis van het JSON object.
+                // Create a new Direction with the parsed ID
                 var direction = new Direction { Id = groupId };
 
+                // Read the list of intersecting directions, if present
                 if (groupObj["intersects_with"] is JArray intersectsArray)
-                    direction.Intersections = intersectsArray.Select(i => i.ToObject<int>()).ToList();
+                    direction.Intersections = intersectsArray
+                        .Select(i => i.ToObject<int>())
+                        .ToList();
 
-                // Inlezen van lanes
+                // Process each lane within this group
                 if (groupObj["lanes"] is JObject lanesObj)
                 {
                     foreach (var laneProperty in lanesObj.Properties())
                     {
+                        // Convert the lane key to an integer lane ID
                         if (!int.TryParse(laneProperty.Name, out int laneId))
                             continue;
 
-                        var trafficLight = new TrafficLight { Id = $"{groupId}.{laneId}" };
+                        // Create a TrafficLight identifier using "groupId.laneId"
+                        var trafficLight = new TrafficLight
+                        {
+                            Id = $"{groupId}.{laneId}"
+                        };
+
+                        // Initialize front and back sensors for the lane
                         trafficLight.Sensors.AddRange(new List<Sensor>
                         {
                             new Sensor { Position = SensorPosition.Front, IsActivated = false },
-                            new Sensor { Position = SensorPosition.Back, IsActivated = false }
+                            new Sensor { Position = SensorPosition.Back,  IsActivated = false }
                         });
+
+                        // Add the configured TrafficLight to the direction
                         direction.TrafficLights.Add(trafficLight);
                     }
                 }
 
-                // EXTRA: Inlezen van transition_requirements indien aanwezig
-                // if (groupObj["transition_requirements"] != null)
-                // {
-                //     // Verwacht een structuur met keys zoals "green" of "red" en een array met condities
-                //     var requirementsObj = groupObj["transition_requirements"] as JObject;
-                //     if (requirementsObj != null)
-                //     {
-                //         // Zorg ervoor dat de property in je model bestaat (bijv. in een Group-klasse)
-                //         // Hier casten we de transition_requirements naar een Dictionary<string, List<TransitionCondition>>
-                //         try
-                //         {
-                //             var requirements = requirementsObj.ToObject<Dictionary<string, List<TransitionCondition>>>();
-                //             // Stel de requirements in. Aangezien je nu wellicht met Direction werkt, kun je
-                //             // de property eventueel toevoegen aan Direction of aan een aparte Group instantie.
-                //             // Hieronder als voorbeeld:
-                //             direction.TransitionRequirements = requirements;
-                //         }
-                //         catch (Exception ex)
-                //         {
-                //             Console.WriteLine($"Fout bij het inlezen van transition_requirements: {ex.Message}");
-                //         }
-                //     }
-                // }
-
-                // EXTRA: Inlezen van transition_blockers indien aanwezig
-                // if (groupObj["transition_blockers"] != null)
-                // {
-                //     var blockersObj = groupObj["transition_blockers"] as JObject;
-                //     if (blockersObj != null)
-                //     {
-                //         try
-                //         {
-                //             var blockers = blockersObj.ToObject<Dictionary<string, List<TransitionCondition>>>();
-                //             direction.TransitionBlockers = blockers;
-                //         }
-                //         catch (Exception ex)
-                //         {
-                //             Console.WriteLine($"Fout bij het inlezen van transition_blockers: {ex.Message}");
-                //         }
-                //     }
-                // }
-
+                // Add the fully populated Direction to the shared list
                 directions.Add(direction);
             }
 
-            Console.WriteLine("Intersection data geladen..");
+            Console.WriteLine("Intersection data loaded.");
         }
     }
 }
